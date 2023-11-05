@@ -1,21 +1,19 @@
 //! Main gameboy system module
 
+use crate::err::{GbError, GbErrorType, GbResult};
 use crate::gb_err;
-use crate::err::{GbResult, GbErrorType, GbError};
 
 #[allow(unused)]
-use log::{error, info, warn, debug, trace, LevelFilter};
+use log::{debug, error, info, trace, warn, LevelFilter};
 
 pub struct Gameboy {
   // TODO
-  is_init: bool
+  is_init: bool,
 }
 
 impl Gameboy {
   pub fn new() -> Gameboy {
-    Gameboy {
-      is_init: false
-    }
+    Gameboy { is_init: false }
   }
 
   pub fn init(&mut self) -> GbResult<()> {
@@ -32,5 +30,4 @@ impl Gameboy {
     info!("Starting emulation");
     Ok(())
   }
-
 }

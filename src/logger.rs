@@ -1,25 +1,25 @@
 //! Logging support for the gameboy emulator.
 
-use log::{Log, Record, Metadata, LevelFilter};
 use colored::*;
+use log::{LevelFilter, Log, Metadata, Record};
 
 /// Logging implementation for the Log trait.
 pub struct Logger {
-  level_filter: LevelFilter
+  level_filter: LevelFilter,
 }
 
 impl Logger {
   /// Default function to be used in const time use cases.
   pub const fn const_default() -> Self {
     Logger {
-      level_filter: LevelFilter::Off
+      level_filter: LevelFilter::Off,
     }
   }
 
   /// Create a new PsxLogger with the provided level filter.
   pub fn new(level: LevelFilter) -> Self {
     let logger = Logger {
-      level_filter: level
+      level_filter: level,
     };
     logger
   }
@@ -39,7 +39,12 @@ impl Log for Logger {
         log::Level::Debug => format!("{}", record.level()).normal(),
         log::Level::Trace => format!("{}", record.level()).normal(),
       };
-      println!("[{:5}] [{}] {}", colored_level, record.metadata().target(), record.args());
+      println!(
+        "[{:5}] [{}] {}",
+        colored_level,
+        record.metadata().target(),
+        record.args()
+      );
     }
   }
 

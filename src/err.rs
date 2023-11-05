@@ -6,7 +6,7 @@ use std::fmt;
 macro_rules! gb_err {
   ( $x:expr ) => {
     Err(GbError::new($x, file!(), line!()))
-  }
+  };
 }
 
 pub type GbResult<T> = Result<T, GbError>;
@@ -21,11 +21,7 @@ pub struct GbError {
 
 impl GbError {
   pub fn new(error: GbErrorType, file: &'static str, line: u32) -> GbError {
-    GbError {
-      error,
-      line,
-      file,
-    }
+    GbError { error, line, file }
   }
 }
 
