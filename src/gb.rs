@@ -1,23 +1,40 @@
 //! Main gameboy system module
 
+use std::cell::RefCell;
+use std::rc::Rc;
+
+use crate::bus::*;
 use crate::err::{GbError, GbErrorType, GbResult};
 use crate::gb_err;
+use crate::ram::*;
 
 #[allow(unused)]
 use log::{debug, error, info, trace, warn, LevelFilter};
 
 pub struct Gameboy {
-  // TODO
   is_init: bool,
+  bus: Bus,
+  eram: Rc<RefCell<Ram>>,
+  wram: Rc<RefCell<Ram>>,
 }
 
 impl Gameboy {
   pub fn new() -> Gameboy {
-    Gameboy { is_init: false }
+    Gameboy {
+      is_init: false,
+      bus: Bus::new(),
+      eram: Rc::new(RefCell::new(Ram::new(8 * 1024))),
+      wram: Rc::new(RefCell::new(Ram::new(8 * 1024))),
+    }
   }
 
   pub fn init(&mut self) -> GbResult<()> {
     info!("Initializing system");
+
+    // connect Bus to all modules
+    self.bus.connect_eram(self.eram.clone())?;
+    self.bus.connect_wram(self.wram.clone())?;
+
     self.is_init = true;
     Ok(())
   }

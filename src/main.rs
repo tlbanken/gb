@@ -1,8 +1,10 @@
 //! Gameboy Emulator entry point
 
+mod bus;
 mod err;
 mod gb;
 mod logger;
+mod ram;
 
 #[allow(unused)]
 use log::{debug, error, info, trace, warn, LevelFilter};

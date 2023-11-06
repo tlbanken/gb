@@ -28,4 +28,5 @@ impl GbError {
 #[derive(Debug)]
 pub enum GbErrorType {
   NotInitialized,
+  AlreadyInitialized,
 }
