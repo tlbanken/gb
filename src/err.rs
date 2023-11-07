@@ -29,4 +29,5 @@ impl GbError {
 pub enum GbErrorType {
   NotInitialized,
   AlreadyInitialized,
+  OutOfBounds,
 }

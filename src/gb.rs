@@ -6,10 +6,13 @@ use std::rc::Rc;
 use crate::bus::*;
 use crate::err::{GbError, GbErrorType, GbResult};
 use crate::gb_err;
+use crate::logger::Logger;
 use crate::ram::*;
 
 #[allow(unused)]
 use log::{debug, error, info, trace, warn, LevelFilter};
+
+static mut LOGGER: Logger = Logger::const_default();
 
 pub struct Gameboy {
   is_init: bool,
@@ -19,7 +22,8 @@ pub struct Gameboy {
 }
 
 impl Gameboy {
-  pub fn new() -> Gameboy {
+  pub fn new(level_filter: LevelFilter) -> Gameboy {
+    init_logging(level_filter);
     Gameboy {
       is_init: false,
       bus: Bus::new(),
@@ -47,4 +51,21 @@ impl Gameboy {
     info!("Starting emulation");
     Ok(())
   }
+}
+
+// Initialize logging and set the level filter
+fn init_logging(level_filter: LevelFilter) {
+  log::set_max_level(level_filter);
+  unsafe {
+    LOGGER = Logger::new(level_filter);
+    match log::set_logger(&LOGGER) {
+      Ok(()) => {}
+      Err(msg) => panic!("Failed to initialize logging: {}", msg),
+    }
+  }
+  error!("Log Level ERROR Enabled!");
+  warn!("Log Level WARN Enabled!");
+  info!("Log Level INFO Enabled!");
+  debug!("Log Level DEBUG Enabled!");
+  trace!("Log Level TRACE Enabled!");
 }

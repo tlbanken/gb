@@ -56,12 +56,12 @@ impl Bus {
     }
   }
 
-  pub fn write(&self, addr: u16) -> GbResult<()> {
+  pub fn write(&mut self, addr: u16, val: u8) -> GbResult<()> {
     match addr {
       // external ram
-      0xa000..=0xbfff => self.eram.as_ref().unwrap().borrow().write(addr),
+      0xa000..=0xbfff => self.eram.as_ref().unwrap().borrow_mut().write(addr, val),
       // working ram
-      0xc000..=0xdfff => self.wram.as_ref().unwrap().borrow().write(addr),
+      0xc000..=0xdfff => self.wram.as_ref().unwrap().borrow_mut().write(addr, val),
       // unsupported
       _ => {
         warn!("Unsupported write address: [0x{:04x}]", addr);
