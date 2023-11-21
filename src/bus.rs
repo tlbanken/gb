@@ -9,6 +9,7 @@ use crate::{
   err::{GbError, GbErrorType, GbResult},
   gb_err,
   ram::Ram,
+  util::LazyDref,
 };
 
 pub struct Bus {
@@ -45,9 +46,9 @@ impl Bus {
   pub fn read(&self, addr: u16) -> GbResult<u8> {
     match addr {
       // external ram
-      0xa000..=0xbfff => self.eram.as_ref().unwrap().borrow().read(addr),
+      0xa000..=0xbfff => self.eram.lazy_dref().read(addr),
       // working ram
-      0xc000..=0xdfff => self.wram.as_ref().unwrap().borrow().read(addr),
+      0xc000..=0xdfff => self.wram.lazy_dref().read(addr),
       // unsupported
       _ => {
         warn!("Unsupported read address: [0x{:04x}]", addr);
@@ -59,9 +60,9 @@ impl Bus {
   pub fn write(&mut self, addr: u16, val: u8) -> GbResult<()> {
     match addr {
       // external ram
-      0xa000..=0xbfff => self.eram.as_ref().unwrap().borrow_mut().write(addr, val),
+      0xa000..=0xbfff => self.eram.lazy_dref_mut().write(addr, val),
       // working ram
-      0xc000..=0xdfff => self.wram.as_ref().unwrap().borrow_mut().write(addr, val),
+      0xc000..=0xdfff => self.wram.lazy_dref_mut().write(addr, val),
       // unsupported
       _ => {
         warn!("Unsupported write address: [0x{:04x}]", addr);

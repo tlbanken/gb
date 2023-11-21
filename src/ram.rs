@@ -5,6 +5,8 @@
 //! given rom to mimic this. The working ram is held internally and is lost on a
 //! power cycle.
 
+use log::info;
+
 use crate::{
   err::{GbError, GbErrorType, GbResult},
   gb_err,
@@ -16,7 +18,7 @@ pub struct Ram {
 
 impl Ram {
   pub fn new(size: u16) -> Ram {
-    // TODO: modify path for creating save file
+    info!("Creating ram with size {} bytes", size);
     Ram {
       data: vec![0u8; size as usize],
     }

@@ -1,10 +1,12 @@
 //! Gameboy Emulator entry point
 
 mod bus;
+mod cpu;
 mod err;
 mod gb;
 mod logger;
 mod ram;
+mod util;
 
 use log::LevelFilter;
 
@@ -13,9 +15,10 @@ fn main() {
 
   let log_level_filter = LevelFilter::max();
 
+  // initialize hardware
   let mut gameboy = gb::Gameboy::new(log_level_filter);
   gameboy.init().unwrap();
 
-  // should never return
+  // start the emulation
   gameboy.run().unwrap();
 }

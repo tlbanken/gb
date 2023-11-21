@@ -4,6 +4,7 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 use crate::bus::*;
+use crate::cpu::Cpu;
 use crate::err::{GbError, GbErrorType, GbResult};
 use crate::gb_err;
 use crate::logger::Logger;
@@ -16,9 +17,10 @@ static mut LOGGER: Logger = Logger::const_default();
 
 pub struct Gameboy {
   is_init: bool,
-  bus: Bus,
+  bus: Rc<RefCell<Bus>>,
   eram: Rc<RefCell<Ram>>,
   wram: Rc<RefCell<Ram>>,
+  cpu: Cpu,
 }
 
 impl Gameboy {
@@ -26,18 +28,22 @@ impl Gameboy {
     init_logging(level_filter);
     Gameboy {
       is_init: false,
-      bus: Bus::new(),
+      bus: Rc::new(RefCell::new(Bus::new())),
       eram: Rc::new(RefCell::new(Ram::new(8 * 1024))),
       wram: Rc::new(RefCell::new(Ram::new(8 * 1024))),
+      cpu: Cpu::new(),
     }
   }
 
   pub fn init(&mut self) -> GbResult<()> {
     info!("Initializing system");
 
-    // connect Bus to all modules
-    self.bus.connect_eram(self.eram.clone())?;
-    self.bus.connect_wram(self.wram.clone())?;
+    // connect Bus to memory
+    self.bus.borrow_mut().connect_eram(self.eram.clone())?;
+    self.bus.borrow_mut().connect_wram(self.wram.clone())?;
+
+    // connect modules to bus
+    self.cpu.connect_bus(self.bus.clone())?;
 
     self.is_init = true;
     Ok(())
@@ -49,6 +55,13 @@ impl Gameboy {
     }
 
     info!("Starting emulation");
+    loop {
+      self.step()?;
+    }
+  }
+
+  fn step(&mut self) -> GbResult<()> {
+    self.cpu.step()?;
     Ok(())
   }
 }
