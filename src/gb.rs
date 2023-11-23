@@ -10,6 +10,7 @@ use crate::err::{GbError, GbErrorType, GbResult};
 use crate::gb_err;
 use crate::logger::Logger;
 use crate::ram::*;
+use crate::view::View;
 
 #[allow(unused)]
 use log::{debug, error, info, trace, warn, LevelFilter};
@@ -23,11 +24,13 @@ pub struct Gameboy {
   wram: Rc<RefCell<Ram>>,
   cart: Rc<RefCell<Cartridge>>,
   cpu: Cpu,
+  view: View,
 }
 
 impl Gameboy {
   pub fn new(level_filter: LevelFilter) -> Gameboy {
     init_logging(level_filter);
+
     Gameboy {
       is_init: false,
       bus: Rc::new(RefCell::new(Bus::new())),
@@ -35,6 +38,7 @@ impl Gameboy {
       wram: Rc::new(RefCell::new(Ram::new(8 * 1024))),
       cart: Rc::new(RefCell::new(Cartridge::new())),
       cpu: Cpu::new(),
+      view: View::new(),
     }
   }
 
@@ -59,11 +63,27 @@ impl Gameboy {
     if !self.is_init {
       return gb_err!(GbErrorType::NotInitialized);
     }
-
     info!("Starting emulation");
-    loop {
-      self.step()?;
+
+    while !self.view.should_quit() {
+      // update the debug view
+      let debug_state = self.view.update_debug(
+        &mut self.cpu,
+        &mut self.eram.borrow_mut(),
+        &mut self.wram.borrow_mut(),
+      )?;
+
+      // system step
+      if !debug_state.halt || (debug_state.halt && debug_state.step) {
+        self.step()?;
+      }
+
+      // draw the window
+      self.view.present()?;
     }
+
+    info!("Exiting emulation :)");
+    Ok(())
   }
 
   fn step(&mut self) -> GbResult<()> {

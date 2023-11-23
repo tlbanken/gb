@@ -8,6 +8,9 @@ mod gb;
 mod logger;
 mod ram;
 mod util;
+mod view;
+
+extern crate sdl2;
 
 use log::LevelFilter;
 
