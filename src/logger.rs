@@ -37,10 +37,10 @@ impl Log for Logger {
         log::Level::Warn => format!("{}", record.level()).yellow(),
         log::Level::Info => format!("{}", record.level()).cyan(),
         log::Level::Debug => format!("{}", record.level()).normal(),
-        log::Level::Trace => format!("{}", record.level()).normal(),
+        log::Level::Trace => format!("{}", record.level()).magenta(),
       };
       println!(
-        "[{:5}] [{}] {}",
+        "[{:5}] [{:10}] {}",
         colored_level,
         record.metadata().target(),
         record.args()

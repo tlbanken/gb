@@ -1,6 +1,7 @@
 //! Gameboy Emulator entry point
 
 mod bus;
+mod cart;
 mod cpu;
 mod err;
 mod gb;

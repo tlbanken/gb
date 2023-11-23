@@ -4,6 +4,7 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 use crate::bus::*;
+use crate::cart::Cartridge;
 use crate::cpu::Cpu;
 use crate::err::{GbError, GbErrorType, GbResult};
 use crate::gb_err;
@@ -20,6 +21,7 @@ pub struct Gameboy {
   bus: Rc<RefCell<Bus>>,
   eram: Rc<RefCell<Ram>>,
   wram: Rc<RefCell<Ram>>,
+  cart: Rc<RefCell<Cartridge>>,
   cpu: Cpu,
 }
 
@@ -31,6 +33,7 @@ impl Gameboy {
       bus: Rc::new(RefCell::new(Bus::new())),
       eram: Rc::new(RefCell::new(Ram::new(8 * 1024))),
       wram: Rc::new(RefCell::new(Ram::new(8 * 1024))),
+      cart: Rc::new(RefCell::new(Cartridge::new())),
       cpu: Cpu::new(),
     }
   }
@@ -38,9 +41,12 @@ impl Gameboy {
   pub fn init(&mut self) -> GbResult<()> {
     info!("Initializing system");
 
+    // TODO: load cartridge
+
     // connect Bus to memory
     self.bus.borrow_mut().connect_eram(self.eram.clone())?;
     self.bus.borrow_mut().connect_wram(self.wram.clone())?;
+    self.bus.borrow_mut().connect_cartridge(self.cart.clone())?;
 
     // connect modules to bus
     self.cpu.connect_bus(self.bus.clone())?;
