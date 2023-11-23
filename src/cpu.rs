@@ -172,10 +172,91 @@ impl Cpu {
     ]
   }
 
+  #[rustfmt::skip]
   /// Set up the dispatcher for CB prefix op codes
   fn init_dispatcher_cb() -> Vec<DispatchFn> {
     // opcodes from https://www.pastraiser.com/cpu/gameboy/gameboy_opcodes.html
-    vec![]
+    vec![
+      /* 00 */ Self::rlc_b,   /* 01 */ Self::rlc_c,   /* 02 */ Self::rlc_d,       /* 03 */ Self::rlc_e,
+      /* 04 */ Self::rlc_h,   /* 05 */ Self::rlc_l,   /* 06 */ Self::rlc__hl_,    /* 07 */ Self::rlc_a,
+      /* 08 */ Self::rrc_b,   /* 09 */ Self::rrc_c,   /* 0A */ Self::rrc_d,       /* 0B */ Self::rrc_e,
+      /* 0C */ Self::rrc_h,   /* 0D */ Self::rrc_l,   /* 0E */ Self::rrc__hl_,    /* 0F */ Self::rrc_a,
+
+      /* 10 */ Self::rl_b,    /* 11 */ Self::rl_c,    /* 12 */ Self::rl_d,        /* 13 */ Self::rl_e,
+      /* 14 */ Self::rl_h,    /* 15 */ Self::rl_l,    /* 16 */ Self::rl__hl_,     /* 17 */ Self::rl_a,
+      /* 18 */ Self::rr_b,    /* 19 */ Self::rr_c,    /* 1A */ Self::rr_d,        /* 1B */ Self::rr_e,
+      /* 1C */ Self::rr_h,    /* 1D */ Self::rr_l,    /* 1E */ Self::rr__hl_,     /* 1F */ Self::rr_a,
+
+      /* 20 */ Self::sla_b,   /* 21 */ Self::sla_c,   /* 22 */ Self::sla_d,       /* 23 */ Self::sla_e,
+      /* 24 */ Self::sla_h,   /* 25 */ Self::sla_l,   /* 26 */ Self::sla__hl_,    /* 27 */ Self::sla_a,
+      /* 28 */ Self::sra_b,   /* 29 */ Self::sra_c,   /* 2A */ Self::sra_d,       /* 2B */ Self::sra_e,
+      /* 2C */ Self::sra_h,   /* 2D */ Self::sra_l,   /* 2E */ Self::sra__hl_,    /* 2F */ Self::sra_a,
+
+      /* 30 */ Self::swap_b,  /* 31 */ Self::swap_c,  /* 32 */ Self::swap_d,      /* 33 */ Self::swap_e,
+      /* 34 */ Self::swap_h,  /* 35 */ Self::swap_l,  /* 36 */ Self::swap__hl_,   /* 37 */ Self::swap_a,
+      /* 38 */ Self::srl_b,   /* 39 */ Self::srl_c,   /* 3A */ Self::srl_d,       /* 3B */ Self::srl_e,
+      /* 3C */ Self::srl_h,   /* 3D */ Self::srl_l,   /* 3E */ Self::srl__hl_,    /* 3F */ Self::srl_a,
+
+      /* 40 */ Self::bit_0_b, /* 41 */ Self::bit_0_c, /* 42 */ Self::bit_0_d,     /* 43 */ Self::bit_0_e,
+      /* 44 */ Self::bit_0_h, /* 45 */ Self::bit_0_l, /* 46 */ Self::bit_0__hl_,  /* 47 */ Self::bit_0_a,
+      /* 48 */ Self::bit_1_b, /* 49 */ Self::bit_1_c, /* 4A */ Self::bit_1_d,     /* 4B */ Self::bit_1_e,
+      /* 4C */ Self::bit_1_h, /* 4D */ Self::bit_1_l, /* 4E */ Self::bit_1__hl_,  /* 4F */ Self::bit_1_a,
+
+      /* 50 */ Self::bit_2_b, /* 51 */ Self::bit_2_c, /* 52 */ Self::bit_2_d,     /* 53 */ Self::bit_2_e,
+      /* 54 */ Self::bit_2_h, /* 55 */ Self::bit_2_l, /* 56 */ Self::bit_2__hl_,  /* 57 */ Self::bit_2_a,
+      /* 58 */ Self::bit_3_b, /* 59 */ Self::bit_3_c, /* 5A */ Self::bit_3_d,     /* 5B */ Self::bit_3_e,
+      /* 5C */ Self::bit_3_h, /* 5D */ Self::bit_3_l, /* 5E */ Self::bit_3__hl_,  /* 5F */ Self::bit_3_a,
+
+      /* 60 */ Self::bit_4_b, /* 61 */ Self::bit_4_c, /* 62 */ Self::bit_4_d,     /* 63 */ Self::bit_4_e,
+      /* 64 */ Self::bit_4_h, /* 65 */ Self::bit_4_l, /* 66 */ Self::bit_4__hl_,  /* 67 */ Self::bit_4_a,
+      /* 68 */ Self::bit_5_b, /* 69 */ Self::bit_5_c, /* 6A */ Self::bit_5_d,     /* 6B */ Self::bit_5_e,
+      /* 6C */ Self::bit_5_h, /* 6D */ Self::bit_5_l, /* 6E */ Self::bit_5__hl_,  /* 6F */ Self::bit_5_a,
+
+      /* 70 */ Self::bit_6_b, /* 71 */ Self::bit_6_c, /* 72 */ Self::bit_6_d,     /* 73 */ Self::bit_6_e,
+      /* 74 */ Self::bit_6_h, /* 75 */ Self::bit_6_l, /* 76 */ Self::bit_6__hl_,  /* 77 */ Self::bit_6_a,
+      /* 78 */ Self::bit_7_b, /* 79 */ Self::bit_7_c, /* 7A */ Self::bit_7_d,     /* 7B */ Self::bit_7_e,
+      /* 7C */ Self::bit_7_h, /* 7D */ Self::bit_7_l, /* 7E */ Self::bit_7__hl_,  /* 7F */ Self::bit_7_a,
+
+      /* 80 */ Self::res_0_b, /* 81 */ Self::res_0_c, /* 82 */ Self::res_0_d,     /* 83 */ Self::res_0_e,
+      /* 84 */ Self::res_0_h, /* 85 */ Self::res_0_l, /* 86 */ Self::res_0__hl_,  /* 87 */ Self::res_0_a,
+      /* 88 */ Self::res_1_b, /* 89 */ Self::res_1_c, /* 8A */ Self::res_1_d,     /* 8B */ Self::res_1_e,
+      /* 8C */ Self::res_1_h, /* 8D */ Self::res_1_l, /* 8E */ Self::res_1__hl_,  /* 8F */ Self::res_1_a,
+
+      /* 90 */ Self::res_2_b, /* 91 */ Self::res_2_c, /* 92 */ Self::res_2_d,     /* 93 */ Self::res_2_e,
+      /* 94 */ Self::res_2_h, /* 95 */ Self::res_2_l, /* 96 */ Self::res_2__hl_,  /* 97 */ Self::res_2_a,
+      /* 98 */ Self::res_3_b, /* 99 */ Self::res_3_c, /* 9A */ Self::res_3_d,     /* 9B */ Self::res_3_e,
+      /* 9C */ Self::res_3_h, /* 9D */ Self::res_3_l, /* 9E */ Self::res_3__hl_,  /* 9F */ Self::res_3_a,
+
+      /* A0 */ Self::res_4_b, /* A1 */ Self::res_4_c, /* A2 */ Self::res_4_d,     /* A3 */ Self::res_4_e,
+      /* A4 */ Self::res_4_h, /* A5 */ Self::res_4_l, /* A6 */ Self::res_4__hl_,  /* A7 */ Self::res_4_a,
+      /* A8 */ Self::res_5_b, /* A9 */ Self::res_5_c, /* AA */ Self::res_5_d,     /* AB */ Self::res_5_e,
+      /* AC */ Self::res_5_h, /* AD */ Self::res_5_l, /* AE */ Self::res_5__hl_,  /* AF */ Self::res_5_a,
+
+      /* B0 */ Self::res_6_b, /* B1 */ Self::res_6_c, /* B2 */ Self::res_6_d,     /* B3 */ Self::res_6_e,
+      /* B4 */ Self::res_6_h, /* B5 */ Self::res_6_l, /* B6 */ Self::res_6__hl_,  /* B7 */ Self::res_6_a,
+      /* B8 */ Self::res_7_b, /* B9 */ Self::res_7_c, /* BA */ Self::res_7_d,     /* BB */ Self::res_7_e,
+      /* BC */ Self::res_7_h, /* BD */ Self::res_7_l, /* BE */ Self::res_7__hl_,  /* BF */ Self::res_7_a,
+
+      /* C0 */ Self::set_0_b, /* C1 */ Self::set_0_c, /* C2 */ Self::set_0_d,     /* C3 */ Self::set_0_e,
+      /* C4 */ Self::set_0_h, /* C5 */ Self::set_0_l, /* C6 */ Self::set_0__hl_,  /* C7 */ Self::set_0_a,
+      /* C8 */ Self::set_1_b, /* C9 */ Self::set_1_c, /* CA */ Self::set_1_d,     /* CB */ Self::set_1_e,
+      /* CC */ Self::set_1_h, /* CD */ Self::set_1_l, /* CE */ Self::set_1__hl_,  /* CF */ Self::set_1_a,
+
+      /* D0 */ Self::set_2_b, /* D1 */ Self::set_2_c, /* D2 */ Self::set_2_d,     /* D3 */ Self::set_2_e,
+      /* D4 */ Self::set_2_h, /* D5 */ Self::set_2_l, /* D6 */ Self::set_2__hl_,  /* D7 */ Self::set_2_a,
+      /* D8 */ Self::set_3_b, /* D9 */ Self::set_3_c, /* DA */ Self::set_3_d,     /* DB */ Self::set_3_e,
+      /* DC */ Self::set_3_h, /* DD */ Self::set_3_l, /* DE */ Self::set_3__hl_,  /* DF */ Self::set_3_a,
+
+      /* E0 */ Self::set_4_b, /* E1 */ Self::set_4_c, /* E2 */ Self::set_4_d,     /* E3 */ Self::set_4_e,
+      /* E4 */ Self::set_4_h, /* E5 */ Self::set_4_l, /* E6 */ Self::set_4__hl_,  /* E7 */ Self::set_4_a,
+      /* E8 */ Self::set_5_b, /* E9 */ Self::set_5_c, /* EA */ Self::set_5_d,     /* EB */ Self::set_5_e,
+      /* EC */ Self::set_5_h, /* ED */ Self::set_5_l, /* EE */ Self::set_5__hl_,  /* EF */ Self::set_5_a,
+
+      /* F0 */ Self::set_6_b, /* F1 */ Self::set_6_c, /* F2 */ Self::set_6_d,     /* F3 */ Self::set_6_e,
+      /* F4 */ Self::set_6_h, /* F5 */ Self::set_6_l, /* F6 */ Self::set_6__hl_,  /* F7 */ Self::set_6_a,
+      /* F8 */ Self::set_7_b, /* F9 */ Self::set_7_c, /* FA */ Self::set_7_d,     /* FB */ Self::set_7_e,
+      /* FC */ Self::set_7_h, /* FD */ Self::set_7_l, /* FE */ Self::set_7__hl_,  /* FF */ Self::set_7_a,
+    ]
   }
 
   // *** Instruction Dispatchers ***
@@ -1191,6 +1272,1032 @@ impl Cpu {
   }
 
   fn ei(&mut self, instr: u8) -> GbResult<()> {
+    unimplemented!()
+  }
+
+  // *** Prefix CB ***
+
+  fn rlc_b(&mut self, instr: u8) -> GbResult<()> {
+    unimplemented!()
+  }
+
+  fn rlc_c(&mut self, instr: u8) -> GbResult<()> {
+    unimplemented!()
+  }
+
+  fn rlc_d(&mut self, instr: u8) -> GbResult<()> {
+    unimplemented!()
+  }
+
+  fn rlc_e(&mut self, instr: u8) -> GbResult<()> {
+    unimplemented!()
+  }
+
+  fn rlc_h(&mut self, instr: u8) -> GbResult<()> {
+    unimplemented!()
+  }
+
+  fn rlc_l(&mut self, instr: u8) -> GbResult<()> {
+    unimplemented!()
+  }
+
+  fn rlc__hl_(&mut self, instr: u8) -> GbResult<()> {
+    unimplemented!()
+  }
+
+  fn rlc_a(&mut self, instr: u8) -> GbResult<()> {
+    unimplemented!()
+  }
+
+  fn rrc_b(&mut self, instr: u8) -> GbResult<()> {
+    unimplemented!()
+  }
+
+  fn rrc_c(&mut self, instr: u8) -> GbResult<()> {
+    unimplemented!()
+  }
+
+  fn rrc_d(&mut self, instr: u8) -> GbResult<()> {
+    unimplemented!()
+  }
+
+  fn rrc_e(&mut self, instr: u8) -> GbResult<()> {
+    unimplemented!()
+  }
+
+  fn rrc_h(&mut self, instr: u8) -> GbResult<()> {
+    unimplemented!()
+  }
+
+  fn rrc_l(&mut self, instr: u8) -> GbResult<()> {
+    unimplemented!()
+  }
+
+  fn rrc__hl_(&mut self, instr: u8) -> GbResult<()> {
+    unimplemented!()
+  }
+
+  fn rrc_a(&mut self, instr: u8) -> GbResult<()> {
+    unimplemented!()
+  }
+
+  fn rl_b(&mut self, instr: u8) -> GbResult<()> {
+    unimplemented!()
+  }
+
+  fn rl_c(&mut self, instr: u8) -> GbResult<()> {
+    unimplemented!()
+  }
+
+  fn rl_d(&mut self, instr: u8) -> GbResult<()> {
+    unimplemented!()
+  }
+
+  fn rl_e(&mut self, instr: u8) -> GbResult<()> {
+    unimplemented!()
+  }
+
+  fn rl_h(&mut self, instr: u8) -> GbResult<()> {
+    unimplemented!()
+  }
+
+  fn rl_l(&mut self, instr: u8) -> GbResult<()> {
+    unimplemented!()
+  }
+
+  fn rl__hl_(&mut self, instr: u8) -> GbResult<()> {
+    unimplemented!()
+  }
+
+  fn rl_a(&mut self, instr: u8) -> GbResult<()> {
+    unimplemented!()
+  }
+
+  fn rr_b(&mut self, instr: u8) -> GbResult<()> {
+    unimplemented!()
+  }
+
+  fn rr_c(&mut self, instr: u8) -> GbResult<()> {
+    unimplemented!()
+  }
+
+  fn rr_d(&mut self, instr: u8) -> GbResult<()> {
+    unimplemented!()
+  }
+
+  fn rr_e(&mut self, instr: u8) -> GbResult<()> {
+    unimplemented!()
+  }
+
+  fn rr_h(&mut self, instr: u8) -> GbResult<()> {
+    unimplemented!()
+  }
+
+  fn rr_l(&mut self, instr: u8) -> GbResult<()> {
+    unimplemented!()
+  }
+
+  fn rr__hl_(&mut self, instr: u8) -> GbResult<()> {
+    unimplemented!()
+  }
+
+  fn rr_a(&mut self, instr: u8) -> GbResult<()> {
+    unimplemented!()
+  }
+
+  fn sla_b(&mut self, instr: u8) -> GbResult<()> {
+    unimplemented!()
+  }
+
+  fn sla_c(&mut self, instr: u8) -> GbResult<()> {
+    unimplemented!()
+  }
+
+  fn sla_d(&mut self, instr: u8) -> GbResult<()> {
+    unimplemented!()
+  }
+
+  fn sla_e(&mut self, instr: u8) -> GbResult<()> {
+    unimplemented!()
+  }
+
+  fn sla_h(&mut self, instr: u8) -> GbResult<()> {
+    unimplemented!()
+  }
+
+  fn sla_l(&mut self, instr: u8) -> GbResult<()> {
+    unimplemented!()
+  }
+
+  fn sla__hl_(&mut self, instr: u8) -> GbResult<()> {
+    unimplemented!()
+  }
+
+  fn sla_a(&mut self, instr: u8) -> GbResult<()> {
+    unimplemented!()
+  }
+
+  fn sra_b(&mut self, instr: u8) -> GbResult<()> {
+    unimplemented!()
+  }
+
+  fn sra_c(&mut self, instr: u8) -> GbResult<()> {
+    unimplemented!()
+  }
+
+  fn sra_d(&mut self, instr: u8) -> GbResult<()> {
+    unimplemented!()
+  }
+
+  fn sra_e(&mut self, instr: u8) -> GbResult<()> {
+    unimplemented!()
+  }
+
+  fn sra_h(&mut self, instr: u8) -> GbResult<()> {
+    unimplemented!()
+  }
+
+  fn sra_l(&mut self, instr: u8) -> GbResult<()> {
+    unimplemented!()
+  }
+
+  fn sra__hl_(&mut self, instr: u8) -> GbResult<()> {
+    unimplemented!()
+  }
+
+  fn sra_a(&mut self, instr: u8) -> GbResult<()> {
+    unimplemented!()
+  }
+
+  fn swap_b(&mut self, instr: u8) -> GbResult<()> {
+    unimplemented!()
+  }
+
+  fn swap_c(&mut self, instr: u8) -> GbResult<()> {
+    unimplemented!()
+  }
+
+  fn swap_d(&mut self, instr: u8) -> GbResult<()> {
+    unimplemented!()
+  }
+
+  fn swap_e(&mut self, instr: u8) -> GbResult<()> {
+    unimplemented!()
+  }
+
+  fn swap_h(&mut self, instr: u8) -> GbResult<()> {
+    unimplemented!()
+  }
+
+  fn swap_l(&mut self, instr: u8) -> GbResult<()> {
+    unimplemented!()
+  }
+
+  fn swap__hl_(&mut self, instr: u8) -> GbResult<()> {
+    unimplemented!()
+  }
+
+  fn swap_a(&mut self, instr: u8) -> GbResult<()> {
+    unimplemented!()
+  }
+
+  fn srl_b(&mut self, instr: u8) -> GbResult<()> {
+    unimplemented!()
+  }
+
+  fn srl_c(&mut self, instr: u8) -> GbResult<()> {
+    unimplemented!()
+  }
+
+  fn srl_d(&mut self, instr: u8) -> GbResult<()> {
+    unimplemented!()
+  }
+
+  fn srl_e(&mut self, instr: u8) -> GbResult<()> {
+    unimplemented!()
+  }
+
+  fn srl_h(&mut self, instr: u8) -> GbResult<()> {
+    unimplemented!()
+  }
+
+  fn srl_l(&mut self, instr: u8) -> GbResult<()> {
+    unimplemented!()
+  }
+
+  fn srl__hl_(&mut self, instr: u8) -> GbResult<()> {
+    unimplemented!()
+  }
+
+  fn srl_a(&mut self, instr: u8) -> GbResult<()> {
+    unimplemented!()
+  }
+
+  fn bit_0_b(&mut self, instr: u8) -> GbResult<()> {
+    unimplemented!()
+  }
+
+  fn bit_0_c(&mut self, instr: u8) -> GbResult<()> {
+    unimplemented!()
+  }
+
+  fn bit_0_d(&mut self, instr: u8) -> GbResult<()> {
+    unimplemented!()
+  }
+
+  fn bit_0_e(&mut self, instr: u8) -> GbResult<()> {
+    unimplemented!()
+  }
+
+  fn bit_0_h(&mut self, instr: u8) -> GbResult<()> {
+    unimplemented!()
+  }
+
+  fn bit_0_l(&mut self, instr: u8) -> GbResult<()> {
+    unimplemented!()
+  }
+
+  fn bit_0__hl_(&mut self, instr: u8) -> GbResult<()> {
+    unimplemented!()
+  }
+
+  fn bit_0_a(&mut self, instr: u8) -> GbResult<()> {
+    unimplemented!()
+  }
+
+  fn bit_1_b(&mut self, instr: u8) -> GbResult<()> {
+    unimplemented!()
+  }
+
+  fn bit_1_c(&mut self, instr: u8) -> GbResult<()> {
+    unimplemented!()
+  }
+
+  fn bit_1_d(&mut self, instr: u8) -> GbResult<()> {
+    unimplemented!()
+  }
+
+  fn bit_1_e(&mut self, instr: u8) -> GbResult<()> {
+    unimplemented!()
+  }
+
+  fn bit_1_h(&mut self, instr: u8) -> GbResult<()> {
+    unimplemented!()
+  }
+
+  fn bit_1_l(&mut self, instr: u8) -> GbResult<()> {
+    unimplemented!()
+  }
+
+  fn bit_1__hl_(&mut self, instr: u8) -> GbResult<()> {
+    unimplemented!()
+  }
+
+  fn bit_1_a(&mut self, instr: u8) -> GbResult<()> {
+    unimplemented!()
+  }
+
+  fn bit_2_b(&mut self, instr: u8) -> GbResult<()> {
+    unimplemented!()
+  }
+
+  fn bit_2_c(&mut self, instr: u8) -> GbResult<()> {
+    unimplemented!()
+  }
+
+  fn bit_2_d(&mut self, instr: u8) -> GbResult<()> {
+    unimplemented!()
+  }
+
+  fn bit_2_e(&mut self, instr: u8) -> GbResult<()> {
+    unimplemented!()
+  }
+
+  fn bit_2_h(&mut self, instr: u8) -> GbResult<()> {
+    unimplemented!()
+  }
+
+  fn bit_2_l(&mut self, instr: u8) -> GbResult<()> {
+    unimplemented!()
+  }
+
+  fn bit_2__hl_(&mut self, instr: u8) -> GbResult<()> {
+    unimplemented!()
+  }
+
+  fn bit_2_a(&mut self, instr: u8) -> GbResult<()> {
+    unimplemented!()
+  }
+
+  fn bit_3_b(&mut self, instr: u8) -> GbResult<()> {
+    unimplemented!()
+  }
+
+  fn bit_3_c(&mut self, instr: u8) -> GbResult<()> {
+    unimplemented!()
+  }
+
+  fn bit_3_d(&mut self, instr: u8) -> GbResult<()> {
+    unimplemented!()
+  }
+
+  fn bit_3_e(&mut self, instr: u8) -> GbResult<()> {
+    unimplemented!()
+  }
+
+  fn bit_3_h(&mut self, instr: u8) -> GbResult<()> {
+    unimplemented!()
+  }
+
+  fn bit_3_l(&mut self, instr: u8) -> GbResult<()> {
+    unimplemented!()
+  }
+
+  fn bit_3__hl_(&mut self, instr: u8) -> GbResult<()> {
+    unimplemented!()
+  }
+
+  fn bit_3_a(&mut self, instr: u8) -> GbResult<()> {
+    unimplemented!()
+  }
+
+  fn bit_4_b(&mut self, instr: u8) -> GbResult<()> {
+    unimplemented!()
+  }
+
+  fn bit_4_c(&mut self, instr: u8) -> GbResult<()> {
+    unimplemented!()
+  }
+
+  fn bit_4_d(&mut self, instr: u8) -> GbResult<()> {
+    unimplemented!()
+  }
+
+  fn bit_4_e(&mut self, instr: u8) -> GbResult<()> {
+    unimplemented!()
+  }
+
+  fn bit_4_h(&mut self, instr: u8) -> GbResult<()> {
+    unimplemented!()
+  }
+
+  fn bit_4_l(&mut self, instr: u8) -> GbResult<()> {
+    unimplemented!()
+  }
+
+  fn bit_4__hl_(&mut self, instr: u8) -> GbResult<()> {
+    unimplemented!()
+  }
+
+  fn bit_4_a(&mut self, instr: u8) -> GbResult<()> {
+    unimplemented!()
+  }
+
+  fn bit_5_b(&mut self, instr: u8) -> GbResult<()> {
+    unimplemented!()
+  }
+
+  fn bit_5_c(&mut self, instr: u8) -> GbResult<()> {
+    unimplemented!()
+  }
+
+  fn bit_5_d(&mut self, instr: u8) -> GbResult<()> {
+    unimplemented!()
+  }
+
+  fn bit_5_e(&mut self, instr: u8) -> GbResult<()> {
+    unimplemented!()
+  }
+
+  fn bit_5_h(&mut self, instr: u8) -> GbResult<()> {
+    unimplemented!()
+  }
+
+  fn bit_5_l(&mut self, instr: u8) -> GbResult<()> {
+    unimplemented!()
+  }
+
+  fn bit_5__hl_(&mut self, instr: u8) -> GbResult<()> {
+    unimplemented!()
+  }
+
+  fn bit_5_a(&mut self, instr: u8) -> GbResult<()> {
+    unimplemented!()
+  }
+
+  fn bit_6_b(&mut self, instr: u8) -> GbResult<()> {
+    unimplemented!()
+  }
+
+  fn bit_6_c(&mut self, instr: u8) -> GbResult<()> {
+    unimplemented!()
+  }
+
+  fn bit_6_d(&mut self, instr: u8) -> GbResult<()> {
+    unimplemented!()
+  }
+
+  fn bit_6_e(&mut self, instr: u8) -> GbResult<()> {
+    unimplemented!()
+  }
+
+  fn bit_6_h(&mut self, instr: u8) -> GbResult<()> {
+    unimplemented!()
+  }
+
+  fn bit_6_l(&mut self, instr: u8) -> GbResult<()> {
+    unimplemented!()
+  }
+
+  fn bit_6__hl_(&mut self, instr: u8) -> GbResult<()> {
+    unimplemented!()
+  }
+
+  fn bit_6_a(&mut self, instr: u8) -> GbResult<()> {
+    unimplemented!()
+  }
+
+  fn bit_7_b(&mut self, instr: u8) -> GbResult<()> {
+    unimplemented!()
+  }
+
+  fn bit_7_c(&mut self, instr: u8) -> GbResult<()> {
+    unimplemented!()
+  }
+
+  fn bit_7_d(&mut self, instr: u8) -> GbResult<()> {
+    unimplemented!()
+  }
+
+  fn bit_7_e(&mut self, instr: u8) -> GbResult<()> {
+    unimplemented!()
+  }
+
+  fn bit_7_h(&mut self, instr: u8) -> GbResult<()> {
+    unimplemented!()
+  }
+
+  fn bit_7_l(&mut self, instr: u8) -> GbResult<()> {
+    unimplemented!()
+  }
+
+  fn bit_7__hl_(&mut self, instr: u8) -> GbResult<()> {
+    unimplemented!()
+  }
+
+  fn bit_7_a(&mut self, instr: u8) -> GbResult<()> {
+    unimplemented!()
+  }
+
+  fn res_0_b(&mut self, instr: u8) -> GbResult<()> {
+    unimplemented!()
+  }
+
+  fn res_0_c(&mut self, instr: u8) -> GbResult<()> {
+    unimplemented!()
+  }
+
+  fn res_0_d(&mut self, instr: u8) -> GbResult<()> {
+    unimplemented!()
+  }
+
+  fn res_0_e(&mut self, instr: u8) -> GbResult<()> {
+    unimplemented!()
+  }
+
+  fn res_0_h(&mut self, instr: u8) -> GbResult<()> {
+    unimplemented!()
+  }
+
+  fn res_0_l(&mut self, instr: u8) -> GbResult<()> {
+    unimplemented!()
+  }
+
+  fn res_0__hl_(&mut self, instr: u8) -> GbResult<()> {
+    unimplemented!()
+  }
+
+  fn res_0_a(&mut self, instr: u8) -> GbResult<()> {
+    unimplemented!()
+  }
+
+  fn res_1_b(&mut self, instr: u8) -> GbResult<()> {
+    unimplemented!()
+  }
+
+  fn res_1_c(&mut self, instr: u8) -> GbResult<()> {
+    unimplemented!()
+  }
+
+  fn res_1_d(&mut self, instr: u8) -> GbResult<()> {
+    unimplemented!()
+  }
+
+  fn res_1_e(&mut self, instr: u8) -> GbResult<()> {
+    unimplemented!()
+  }
+
+  fn res_1_h(&mut self, instr: u8) -> GbResult<()> {
+    unimplemented!()
+  }
+
+  fn res_1_l(&mut self, instr: u8) -> GbResult<()> {
+    unimplemented!()
+  }
+
+  fn res_1__hl_(&mut self, instr: u8) -> GbResult<()> {
+    unimplemented!()
+  }
+
+  fn res_1_a(&mut self, instr: u8) -> GbResult<()> {
+    unimplemented!()
+  }
+
+  fn res_2_b(&mut self, instr: u8) -> GbResult<()> {
+    unimplemented!()
+  }
+
+  fn res_2_c(&mut self, instr: u8) -> GbResult<()> {
+    unimplemented!()
+  }
+
+  fn res_2_d(&mut self, instr: u8) -> GbResult<()> {
+    unimplemented!()
+  }
+
+  fn res_2_e(&mut self, instr: u8) -> GbResult<()> {
+    unimplemented!()
+  }
+
+  fn res_2_h(&mut self, instr: u8) -> GbResult<()> {
+    unimplemented!()
+  }
+
+  fn res_2_l(&mut self, instr: u8) -> GbResult<()> {
+    unimplemented!()
+  }
+
+  fn res_2__hl_(&mut self, instr: u8) -> GbResult<()> {
+    unimplemented!()
+  }
+
+  fn res_2_a(&mut self, instr: u8) -> GbResult<()> {
+    unimplemented!()
+  }
+
+  fn res_3_b(&mut self, instr: u8) -> GbResult<()> {
+    unimplemented!()
+  }
+
+  fn res_3_c(&mut self, instr: u8) -> GbResult<()> {
+    unimplemented!()
+  }
+
+  fn res_3_d(&mut self, instr: u8) -> GbResult<()> {
+    unimplemented!()
+  }
+
+  fn res_3_e(&mut self, instr: u8) -> GbResult<()> {
+    unimplemented!()
+  }
+
+  fn res_3_h(&mut self, instr: u8) -> GbResult<()> {
+    unimplemented!()
+  }
+
+  fn res_3_l(&mut self, instr: u8) -> GbResult<()> {
+    unimplemented!()
+  }
+
+  fn res_3__hl_(&mut self, instr: u8) -> GbResult<()> {
+    unimplemented!()
+  }
+
+  fn res_3_a(&mut self, instr: u8) -> GbResult<()> {
+    unimplemented!()
+  }
+
+  fn res_4_b(&mut self, instr: u8) -> GbResult<()> {
+    unimplemented!()
+  }
+
+  fn res_4_c(&mut self, instr: u8) -> GbResult<()> {
+    unimplemented!()
+  }
+
+  fn res_4_d(&mut self, instr: u8) -> GbResult<()> {
+    unimplemented!()
+  }
+
+  fn res_4_e(&mut self, instr: u8) -> GbResult<()> {
+    unimplemented!()
+  }
+
+  fn res_4_h(&mut self, instr: u8) -> GbResult<()> {
+    unimplemented!()
+  }
+
+  fn res_4_l(&mut self, instr: u8) -> GbResult<()> {
+    unimplemented!()
+  }
+
+  fn res_4__hl_(&mut self, instr: u8) -> GbResult<()> {
+    unimplemented!()
+  }
+
+  fn res_4_a(&mut self, instr: u8) -> GbResult<()> {
+    unimplemented!()
+  }
+
+  fn res_5_b(&mut self, instr: u8) -> GbResult<()> {
+    unimplemented!()
+  }
+
+  fn res_5_c(&mut self, instr: u8) -> GbResult<()> {
+    unimplemented!()
+  }
+
+  fn res_5_d(&mut self, instr: u8) -> GbResult<()> {
+    unimplemented!()
+  }
+
+  fn res_5_e(&mut self, instr: u8) -> GbResult<()> {
+    unimplemented!()
+  }
+
+  fn res_5_h(&mut self, instr: u8) -> GbResult<()> {
+    unimplemented!()
+  }
+
+  fn res_5_l(&mut self, instr: u8) -> GbResult<()> {
+    unimplemented!()
+  }
+
+  fn res_5__hl_(&mut self, instr: u8) -> GbResult<()> {
+    unimplemented!()
+  }
+
+  fn res_5_a(&mut self, instr: u8) -> GbResult<()> {
+    unimplemented!()
+  }
+
+  fn res_6_b(&mut self, instr: u8) -> GbResult<()> {
+    unimplemented!()
+  }
+
+  fn res_6_c(&mut self, instr: u8) -> GbResult<()> {
+    unimplemented!()
+  }
+
+  fn res_6_d(&mut self, instr: u8) -> GbResult<()> {
+    unimplemented!()
+  }
+
+  fn res_6_e(&mut self, instr: u8) -> GbResult<()> {
+    unimplemented!()
+  }
+
+  fn res_6_h(&mut self, instr: u8) -> GbResult<()> {
+    unimplemented!()
+  }
+
+  fn res_6_l(&mut self, instr: u8) -> GbResult<()> {
+    unimplemented!()
+  }
+
+  fn res_6__hl_(&mut self, instr: u8) -> GbResult<()> {
+    unimplemented!()
+  }
+
+  fn res_6_a(&mut self, instr: u8) -> GbResult<()> {
+    unimplemented!()
+  }
+
+  fn res_7_b(&mut self, instr: u8) -> GbResult<()> {
+    unimplemented!()
+  }
+
+  fn res_7_c(&mut self, instr: u8) -> GbResult<()> {
+    unimplemented!()
+  }
+
+  fn res_7_d(&mut self, instr: u8) -> GbResult<()> {
+    unimplemented!()
+  }
+
+  fn res_7_e(&mut self, instr: u8) -> GbResult<()> {
+    unimplemented!()
+  }
+
+  fn res_7_h(&mut self, instr: u8) -> GbResult<()> {
+    unimplemented!()
+  }
+
+  fn res_7_l(&mut self, instr: u8) -> GbResult<()> {
+    unimplemented!()
+  }
+
+  fn res_7__hl_(&mut self, instr: u8) -> GbResult<()> {
+    unimplemented!()
+  }
+
+  fn res_7_a(&mut self, instr: u8) -> GbResult<()> {
+    unimplemented!()
+  }
+
+  fn set_0_b(&mut self, instr: u8) -> GbResult<()> {
+    unimplemented!()
+  }
+
+  fn set_0_c(&mut self, instr: u8) -> GbResult<()> {
+    unimplemented!()
+  }
+
+  fn set_0_d(&mut self, instr: u8) -> GbResult<()> {
+    unimplemented!()
+  }
+
+  fn set_0_e(&mut self, instr: u8) -> GbResult<()> {
+    unimplemented!()
+  }
+
+  fn set_0_h(&mut self, instr: u8) -> GbResult<()> {
+    unimplemented!()
+  }
+
+  fn set_0_l(&mut self, instr: u8) -> GbResult<()> {
+    unimplemented!()
+  }
+
+  fn set_0__hl_(&mut self, instr: u8) -> GbResult<()> {
+    unimplemented!()
+  }
+
+  fn set_0_a(&mut self, instr: u8) -> GbResult<()> {
+    unimplemented!()
+  }
+
+  fn set_1_b(&mut self, instr: u8) -> GbResult<()> {
+    unimplemented!()
+  }
+
+  fn set_1_c(&mut self, instr: u8) -> GbResult<()> {
+    unimplemented!()
+  }
+
+  fn set_1_d(&mut self, instr: u8) -> GbResult<()> {
+    unimplemented!()
+  }
+
+  fn set_1_e(&mut self, instr: u8) -> GbResult<()> {
+    unimplemented!()
+  }
+
+  fn set_1_h(&mut self, instr: u8) -> GbResult<()> {
+    unimplemented!()
+  }
+
+  fn set_1_l(&mut self, instr: u8) -> GbResult<()> {
+    unimplemented!()
+  }
+
+  fn set_1__hl_(&mut self, instr: u8) -> GbResult<()> {
+    unimplemented!()
+  }
+
+  fn set_1_a(&mut self, instr: u8) -> GbResult<()> {
+    unimplemented!()
+  }
+
+  fn set_2_b(&mut self, instr: u8) -> GbResult<()> {
+    unimplemented!()
+  }
+
+  fn set_2_c(&mut self, instr: u8) -> GbResult<()> {
+    unimplemented!()
+  }
+
+  fn set_2_d(&mut self, instr: u8) -> GbResult<()> {
+    unimplemented!()
+  }
+
+  fn set_2_e(&mut self, instr: u8) -> GbResult<()> {
+    unimplemented!()
+  }
+
+  fn set_2_h(&mut self, instr: u8) -> GbResult<()> {
+    unimplemented!()
+  }
+
+  fn set_2_l(&mut self, instr: u8) -> GbResult<()> {
+    unimplemented!()
+  }
+
+  fn set_2__hl_(&mut self, instr: u8) -> GbResult<()> {
+    unimplemented!()
+  }
+
+  fn set_2_a(&mut self, instr: u8) -> GbResult<()> {
+    unimplemented!()
+  }
+
+  fn set_3_b(&mut self, instr: u8) -> GbResult<()> {
+    unimplemented!()
+  }
+
+  fn set_3_c(&mut self, instr: u8) -> GbResult<()> {
+    unimplemented!()
+  }
+
+  fn set_3_d(&mut self, instr: u8) -> GbResult<()> {
+    unimplemented!()
+  }
+
+  fn set_3_e(&mut self, instr: u8) -> GbResult<()> {
+    unimplemented!()
+  }
+
+  fn set_3_h(&mut self, instr: u8) -> GbResult<()> {
+    unimplemented!()
+  }
+
+  fn set_3_l(&mut self, instr: u8) -> GbResult<()> {
+    unimplemented!()
+  }
+
+  fn set_3__hl_(&mut self, instr: u8) -> GbResult<()> {
+    unimplemented!()
+  }
+
+  fn set_3_a(&mut self, instr: u8) -> GbResult<()> {
+    unimplemented!()
+  }
+
+  fn set_4_b(&mut self, instr: u8) -> GbResult<()> {
+    unimplemented!()
+  }
+
+  fn set_4_c(&mut self, instr: u8) -> GbResult<()> {
+    unimplemented!()
+  }
+
+  fn set_4_d(&mut self, instr: u8) -> GbResult<()> {
+    unimplemented!()
+  }
+
+  fn set_4_e(&mut self, instr: u8) -> GbResult<()> {
+    unimplemented!()
+  }
+
+  fn set_4_h(&mut self, instr: u8) -> GbResult<()> {
+    unimplemented!()
+  }
+
+  fn set_4_l(&mut self, instr: u8) -> GbResult<()> {
+    unimplemented!()
+  }
+
+  fn set_4__hl_(&mut self, instr: u8) -> GbResult<()> {
+    unimplemented!()
+  }
+
+  fn set_4_a(&mut self, instr: u8) -> GbResult<()> {
+    unimplemented!()
+  }
+
+  fn set_5_b(&mut self, instr: u8) -> GbResult<()> {
+    unimplemented!()
+  }
+
+  fn set_5_c(&mut self, instr: u8) -> GbResult<()> {
+    unimplemented!()
+  }
+
+  fn set_5_d(&mut self, instr: u8) -> GbResult<()> {
+    unimplemented!()
+  }
+
+  fn set_5_e(&mut self, instr: u8) -> GbResult<()> {
+    unimplemented!()
+  }
+
+  fn set_5_h(&mut self, instr: u8) -> GbResult<()> {
+    unimplemented!()
+  }
+
+  fn set_5_l(&mut self, instr: u8) -> GbResult<()> {
+    unimplemented!()
+  }
+
+  fn set_5__hl_(&mut self, instr: u8) -> GbResult<()> {
+    unimplemented!()
+  }
+
+  fn set_5_a(&mut self, instr: u8) -> GbResult<()> {
+    unimplemented!()
+  }
+
+  fn set_6_b(&mut self, instr: u8) -> GbResult<()> {
+    unimplemented!()
+  }
+
+  fn set_6_c(&mut self, instr: u8) -> GbResult<()> {
+    unimplemented!()
+  }
+
+  fn set_6_d(&mut self, instr: u8) -> GbResult<()> {
+    unimplemented!()
+  }
+
+  fn set_6_e(&mut self, instr: u8) -> GbResult<()> {
+    unimplemented!()
+  }
+
+  fn set_6_h(&mut self, instr: u8) -> GbResult<()> {
+    unimplemented!()
+  }
+
+  fn set_6_l(&mut self, instr: u8) -> GbResult<()> {
+    unimplemented!()
+  }
+
+  fn set_6__hl_(&mut self, instr: u8) -> GbResult<()> {
+    unimplemented!()
+  }
+
+  fn set_6_a(&mut self, instr: u8) -> GbResult<()> {
+    unimplemented!()
+  }
+
+  fn set_7_b(&mut self, instr: u8) -> GbResult<()> {
+    unimplemented!()
+  }
+
+  fn set_7_c(&mut self, instr: u8) -> GbResult<()> {
+    unimplemented!()
+  }
+
+  fn set_7_d(&mut self, instr: u8) -> GbResult<()> {
+    unimplemented!()
+  }
+
+  fn set_7_e(&mut self, instr: u8) -> GbResult<()> {
+    unimplemented!()
+  }
+
+  fn set_7_h(&mut self, instr: u8) -> GbResult<()> {
+    unimplemented!()
+  }
+
+  fn set_7_l(&mut self, instr: u8) -> GbResult<()> {
+    unimplemented!()
+  }
+
+  fn set_7__hl_(&mut self, instr: u8) -> GbResult<()> {
+    unimplemented!()
+  }
+
+  fn set_7_a(&mut self, instr: u8) -> GbResult<()> {
     unimplemented!()
   }
 }
