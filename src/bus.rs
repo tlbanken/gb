@@ -30,7 +30,7 @@ impl Bus {
 
   /// Adds a reference to the working ram to the bus
   pub fn connect_wram(&mut self, wram: Rc<RefCell<Ram>>) -> GbResult<()> {
-    info!("Connecting working ram to the bus");
+    debug!("Connecting working ram to the bus");
     match self.wram {
       None => self.wram = Some(wram),
       Some(_) => return gb_err!(GbErrorType::AlreadyInitialized),
@@ -40,7 +40,7 @@ impl Bus {
 
   /// Adds a reference to the external ram to the bus
   pub fn connect_eram(&mut self, eram: Rc<RefCell<Ram>>) -> GbResult<()> {
-    info!("Connecting external ram to the bus");
+    debug!("Connecting external ram to the bus");
     match self.eram {
       None => self.eram = Some(eram),
       Some(_) => return gb_err!(GbErrorType::AlreadyInitialized),
@@ -50,7 +50,7 @@ impl Bus {
 
   /// Adds a reference to the cartridge to the bus
   pub fn connect_cartridge(&mut self, cart: Rc<RefCell<Cartridge>>) -> GbResult<()> {
-    info!("Connecting cartridge to the bus");
+    debug!("Connecting cartridge to the bus");
     match self.cart {
       None => self.cart = Some(cart),
       Some(_) => return gb_err!(GbErrorType::AlreadyInitialized),

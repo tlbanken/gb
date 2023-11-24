@@ -1,11 +1,16 @@
 [package]
 name = "gb"
 version = "0.1.0"
+authors = ["Travis Banken"]
 edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
 colored = "2.0.4"
-log = "0.4.20"
-sdl2 = {version = "0.36.0", features = ["bundled"]}
+egui = "0.24.0"
+egui_wgpu_backend = "0.27.0"
+log = {version = "0.4.20", features = ["max_level_info", "release_max_level_warn"]}
+tokio = {version = "1.34.0", features = ["macros", "rt-multi-thread"]}
+wgpu = "0.18.0"
+winit = {version = "0.29.3", features = ["rwh_05"]}

@@ -1,5 +1,10 @@
 //! Main gameboy system module
 
+#[allow(unused)]
+use log::{debug, error, info, trace, warn, LevelFilter};
+use wgpu::{Backends, Instance, InstanceDescriptor};
+use winit::raw_window_handle::HasWindowHandle;
+
 use std::cell::RefCell;
 use std::rc::Rc;
 
@@ -10,12 +15,31 @@ use crate::err::{GbError, GbErrorType, GbResult};
 use crate::gb_err;
 use crate::logger::Logger;
 use crate::ram::*;
-use crate::view::View;
+use crate::video::Video;
 
-#[allow(unused)]
-use log::{debug, error, info, trace, warn, LevelFilter};
+use winit::event_loop::{EventLoopBuilder, EventLoopWindowTarget};
+use winit::window::Window;
+use winit::{
+  event::{Event, WindowEvent},
+  event_loop::{ControlFlow, EventLoop},
+  window::WindowBuilder,
+};
 
 static mut LOGGER: Logger = Logger::const_default();
+
+// window constants
+const INITIAL_WIDTH: u32 = 800;
+const INITIAL_HEIGHT: u32 = 600;
+
+struct DebugState {
+  pub halt: bool,
+  pub step: bool,
+}
+
+// custom events for emulation flow
+enum GbEvent {
+  RequestRedraw,
+}
 
 pub struct Gameboy {
   is_init: bool,
@@ -24,7 +48,7 @@ pub struct Gameboy {
   wram: Rc<RefCell<Ram>>,
   cart: Rc<RefCell<Cartridge>>,
   cpu: Cpu,
-  view: View,
+  video: Option<Video>,
 }
 
 impl Gameboy {
@@ -38,7 +62,7 @@ impl Gameboy {
       wram: Rc::new(RefCell::new(Ram::new(8 * 1024))),
       cart: Rc::new(RefCell::new(Cartridge::new())),
       cpu: Cpu::new(),
-      view: View::new(),
+      video: None,
     }
   }
 
@@ -59,28 +83,48 @@ impl Gameboy {
     Ok(())
   }
 
-  pub fn run(&mut self) -> GbResult<()> {
+  pub async fn run(mut self) -> GbResult<()> {
     if !self.is_init {
       return gb_err!(GbErrorType::NotInitialized);
     }
     info!("Starting emulation");
 
-    while !self.view.should_quit() {
-      // update the debug view
-      let debug_state = self.view.update_debug(
-        &mut self.cpu,
-        &mut self.eram.borrow_mut(),
-        &mut self.wram.borrow_mut(),
-      )?;
+    // build event loop and window with custom event support
+    let event_loop = EventLoopBuilder::<GbEvent>::with_user_event()
+      .build()
+      .unwrap();
+    let window = WindowBuilder::new()
+      .with_decorations(true)
+      .with_resizable(false)
+      .with_transparent(false)
+      .with_title("Gameboy Emulator")
+      .with_inner_size(winit::dpi::PhysicalSize {
+        width: INITIAL_WIDTH,
+        height: INITIAL_HEIGHT,
+      })
+      .build(&event_loop)
+      .unwrap();
 
-      // system step
-      if !debug_state.halt || (debug_state.halt && debug_state.step) {
-        self.step()?;
-      }
+    self.video = Some(Video::new(window).await);
 
-      // draw the window
-      self.view.present()?;
-    }
+    // run as fast as possible
+    event_loop.set_control_flow(ControlFlow::Poll);
+    event_loop
+      .run(|event, elwt| {
+        self.handle_events(event, elwt);
+
+        // update the debug view
+        let debug_state = self.update_debug().unwrap();
+
+        // system step
+        if !debug_state.halt || (debug_state.halt && debug_state.step) {
+          self.step().unwrap();
+        }
+
+        // draw the window
+        self.video.as_mut().unwrap().render().unwrap();
+      })
+      .unwrap();
 
     info!("Exiting emulation :)");
     Ok(())
@@ -89,6 +133,25 @@ impl Gameboy {
   fn step(&mut self) -> GbResult<()> {
     self.cpu.step()?;
     Ok(())
+  }
+
+  fn handle_events<T>(&mut self, event: Event<T>, elwt: &EventLoopWindowTarget<T>) {
+    match event {
+      Event::WindowEvent {
+        event: WindowEvent::CloseRequested,
+        ..
+      } => {
+        elwt.exit();
+      }
+      _ => (),
+    }
+  }
+
+  fn update_debug(&mut self) -> GbResult<DebugState> {
+    Ok(DebugState {
+      halt: true,
+      step: false,
+    })
   }
 }
 

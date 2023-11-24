@@ -8,15 +8,15 @@ mod gb;
 mod logger;
 mod ram;
 mod util;
-mod view;
-
-extern crate sdl2;
+mod video;
 
 use log::LevelFilter;
 
-fn main() {
+#[tokio::main]
+async fn main() {
   println!("~~~ Enter the Gameboy Emulation ~~~");
 
+  // set the max through compile time config in Cargo.toml
   let log_level_filter = LevelFilter::max();
 
   // initialize hardware
@@ -24,5 +24,5 @@ fn main() {
   gameboy.init().unwrap();
 
   // start the emulation
-  gameboy.run().unwrap();
+  gameboy.run().await.unwrap();
 }
