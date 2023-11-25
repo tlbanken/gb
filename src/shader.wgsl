@@ -28,30 +28,39 @@ fn vs_main(
 
 // Fragment Shader
 
+// Render Window Resolution
 struct ResolutionUniform {
-  val: vec2<u32>
+  x: u32,
+  y: u32,
 };
 @group(0) @binding(0)
 var<uniform> resolution: ResolutionUniform;
 
+// Virtual Pixel in the Gameboy Screen
 struct Pixel {
   color: vec4<f32>
 }
 @group(1) @binding(0)
 var<storage, read> pixels: array<Pixel>;
 
+// Gameboy Screen Resolution (aka number of "Virtual Pixels")
+struct GbScreenRes {
+  x: u32,
+  y: u32,
+}
+@group(1) @binding(1)
+var<uniform> gb_screen_res: GbScreenRes;
+
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
   // The goal of the fragment shader is to map our screen pixel coordinate 
-  // to our gameboy pixel coordinate and read that pixels color. The color 
+  // to our gameboy pixel coordinate and read that pixel's color. The color 
   // is provided from a storage buffer sent from the cpu.
 
-  // TODO: pass gameboy screen resolution in as uniform buffer
-  // gameboy screen is 160 x 144
-  let scale_x = in.pos.x / f32(resolution.val.x);
-  let scale_y = in.pos.y / f32(resolution.val.y);
-  let x = u32(scale_x * 160.0);
-  let y = u32(scale_y * 144.0);
-  let color = pixels[(y * u32(160)) + x].color;
+  let scale_x = in.pos.x / f32(resolution.x);
+  let scale_y = in.pos.y / f32(resolution.y);
+  let x = u32(scale_x * f32(gb_screen_res.x));
+  let y = u32(scale_y * f32(gb_screen_res.y));
+  let color = pixels[(y * gb_screen_res.x) + x].color;
   return color;
 }

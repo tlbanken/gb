@@ -70,28 +70,52 @@ impl Screen {
       usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
     });
 
+    let screen_res_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+      label: Some("Screen Resolution Uniform Buffer"),
+      contents: bytemuck::cast_slice(&[GB_RESOLUTION]),
+      usage: wgpu::BufferUsages::UNIFORM,
+    });
+
     let pixels_bind_group_layout =
       device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-        entries: &[wgpu::BindGroupLayoutEntry {
-          binding: 0,
-          visibility: wgpu::ShaderStages::FRAGMENT,
-          ty: wgpu::BindingType::Buffer {
-            ty: wgpu::BufferBindingType::Storage { read_only: true },
-            has_dynamic_offset: false,
-            min_binding_size: None,
+        entries: &[
+          wgpu::BindGroupLayoutEntry {
+            binding: 0,
+            visibility: wgpu::ShaderStages::FRAGMENT,
+            ty: wgpu::BindingType::Buffer {
+              ty: wgpu::BufferBindingType::Storage { read_only: true },
+              has_dynamic_offset: false,
+              min_binding_size: None,
+            },
+            count: None,
           },
-          count: None,
-        }],
+          wgpu::BindGroupLayoutEntry {
+            binding: 1,
+            visibility: wgpu::ShaderStages::FRAGMENT,
+            ty: wgpu::BindingType::Buffer {
+              ty: wgpu::BufferBindingType::Uniform,
+              has_dynamic_offset: false,
+              min_binding_size: None,
+            },
+            count: None,
+          },
+        ],
         label: Some("pixels_bind_group_layout"),
       });
 
     let pixels_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
       label: Some("pixels_bind_group"),
       layout: &pixels_bind_group_layout,
-      entries: &[wgpu::BindGroupEntry {
-        binding: 0,
-        resource: pixels_buffer.as_entire_binding(),
-      }],
+      entries: &[
+        wgpu::BindGroupEntry {
+          binding: 0,
+          resource: pixels_buffer.as_entire_binding(),
+        },
+        wgpu::BindGroupEntry {
+          binding: 1,
+          resource: screen_res_buffer.as_entire_binding(),
+        },
+      ],
     });
 
     Self {
