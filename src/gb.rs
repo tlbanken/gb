@@ -2,8 +2,8 @@
 
 #[allow(unused)]
 use log::{debug, error, info, trace, warn, LevelFilter};
-use wgpu::{Backends, Instance, InstanceDescriptor};
-use winit::raw_window_handle::HasWindowHandle;
+// use wgpu::{Backends, Instance, InstanceDescriptor};
+// use winit::raw_window_handle::HasWindowHandle;
 
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -13,27 +13,27 @@ use crate::cart::Cartridge;
 use crate::cpu::Cpu;
 use crate::err::{GbError, GbErrorType, GbResult};
 use crate::gb_err;
-use crate::geometry::{Color, Pos};
 use crate::logger::Logger;
 use crate::ram::*;
+use crate::screen::{Color, Pos};
 use crate::video::Video;
 
 use winit::event_loop::{EventLoopBuilder, EventLoopWindowTarget};
-use winit::window::Window;
+// use winit::window::Window;
 use winit::{
   event::{Event, WindowEvent},
-  event_loop::{ControlFlow, EventLoop},
+  event_loop::ControlFlow,
   window::WindowBuilder,
 };
 
 static mut LOGGER: Logger = Logger::const_default();
 
 // window constants
-const INITIAL_WIDTH: u32 = 1920;
-const INITIAL_HEIGHT: u32 = 1080;
-// const SCALE_FACTOR: u32 = 10;
-// const INITIAL_WIDTH: u32 = 160 * SCALE_FACTOR;
-// const INITIAL_HEIGHT: u32 = 144 * SCALE_FACTOR;
+// const INITIAL_WIDTH: u32 = 1920;
+// const INITIAL_HEIGHT: u32 = 1080;
+const SCALE_FACTOR: u32 = 10;
+const INITIAL_WIDTH: u32 = 160 * SCALE_FACTOR;
+const INITIAL_HEIGHT: u32 = 144 * SCALE_FACTOR;
 
 struct DebugState {
   pub halt: bool,
@@ -125,26 +125,15 @@ impl Gameboy {
           self.step().unwrap();
         }
 
-        self
-          .video
-          .as_mut()
-          .unwrap()
-          .set_pixel(Pos { x: 159, y: 141 }, Color::new(1.0, 1.0, 0.0));
-        self
-          .video
-          .as_mut()
-          .unwrap()
-          .set_pixel(Pos { x: 158, y: 142 }, Color::new(0.0, 0.0, 1.0));
-        self
-          .video
-          .as_mut()
-          .unwrap()
-          .set_pixel(Pos { x: 159, y: 143 }, Color::new(0.0, 1.0, 0.0));
-        self
-          .video
-          .as_mut()
-          .unwrap()
-          .set_pixel(Pos { x: 159, y: 142 }, Color::new(0.0, 0.0, 1.0));
+        // demo draw
+        for y in 0..144 {
+          for x in 0..160 {
+            self.video.as_mut().unwrap().set_pixel(
+              Pos { x, y },
+              Color::new(y as f32 / 144.0, x as f32 / 160.0, 0.0),
+            );
+          }
+        }
 
         // draw the window
         self.video.as_mut().unwrap().render().unwrap();

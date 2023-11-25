@@ -1,12 +1,10 @@
 //! Gameboy Emulator entry point
-#![feature(const_fn_floating_point_arithmetic)]
 
 mod bus;
 mod cart;
 mod cpu;
 mod err;
 mod gb;
-mod geometry;
 mod logger;
 mod ram;
 mod screen;

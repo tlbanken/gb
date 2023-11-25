@@ -3,33 +3,14 @@
 use wgpu::util::DeviceExt;
 use winit::window::Window;
 
-use crate::{
-  geometry::{Color, Pos, Resolution, Vertex},
-  screen::Screen,
-};
+use crate::screen::{Color, Pos, Resolution, Screen};
 
 const CLEAR_COLOR: wgpu::Color = wgpu::Color {
-  r: 0.1,
-  g: 0.2,
-  b: 0.3,
+  r: 0.0,
+  g: 0.0,
+  b: 0.0,
   a: 1.0,
 };
-
-// Demo vertices
-const VERTICES: &[Vertex] = &[
-  Vertex {
-    pos: Pos { x: 0, y: 0 },
-    col: Color::new(1.0, 0.0, 0.0),
-  },
-  Vertex {
-    pos: Pos { x: 0, y: 300 },
-    col: Color::new(0.0, 1.0, 0.0),
-  },
-  Vertex {
-    pos: Pos { x: 400, y: 0 },
-    col: Color::new(0.0, 0.0, 1.0),
-  },
-];
 
 pub struct Video {
   screen: Screen,
@@ -39,8 +20,6 @@ pub struct Video {
   config: wgpu::SurfaceConfiguration,
   size: Resolution,
   render_pipeline: wgpu::RenderPipeline,
-  vertex_buffer: wgpu::Buffer,
-  num_vertices: u32,
   resolution_buffer: wgpu::Buffer,
   resolution_bind_group: wgpu::BindGroup,
   // The window must be declared after the surface so
@@ -55,9 +34,6 @@ impl Video {
       width: window.inner_size().width,
       height: window.inner_size().height,
     };
-
-    // init the gb screen
-    let screen = Screen::new(size);
 
     // the instance gives us a way to create handle to gpu and create surfaces
     let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
@@ -92,7 +68,9 @@ impl Video {
       .await
       .unwrap();
 
-    // TODO: this may not be needed if we aren't writing shader code
+    // init the gb screen
+    let screen = Screen::new(&device);
+
     // configure surface
     let surface_caps = surface.get_capabilities(&adapter);
     // configure for srgb display
@@ -127,7 +105,7 @@ impl Video {
       device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
         entries: &[wgpu::BindGroupLayoutEntry {
           binding: 0,
-          visibility: wgpu::ShaderStages::VERTEX,
+          visibility: wgpu::ShaderStages::FRAGMENT,
           ty: wgpu::BindingType::Buffer {
             ty: wgpu::BufferBindingType::Uniform,
             has_dynamic_offset: false,
@@ -150,7 +128,7 @@ impl Video {
     // create pipeline layout
     let render_pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
       label: Some("Render Pipeline Layout"),
-      bind_group_layouts: &[&resolution_bind_group_layout],
+      bind_group_layouts: &[&resolution_bind_group_layout, screen.group_layout()],
       push_constant_ranges: &[],
     });
 
@@ -161,7 +139,7 @@ impl Video {
       vertex: wgpu::VertexState {
         module: &shader,
         entry_point: "vs_main",
-        buffers: &[Vertex::desc()],
+        buffers: &[],
       },
       fragment: Some(wgpu::FragmentState {
         module: &shader,
@@ -191,15 +169,6 @@ impl Video {
       multiview: None,
     });
 
-    // create our vertex buffer from our screen pixels
-    let vertices = screen.vertices();
-    let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-      label: Some("Vertex Buffer"),
-      contents: bytemuck::cast_slice(vertices),
-      usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
-    });
-    let num_vertices = vertices.len() as u32;
-
     Self {
       screen,
       window,
@@ -209,8 +178,6 @@ impl Video {
       config,
       size,
       render_pipeline,
-      vertex_buffer,
-      num_vertices,
       resolution_buffer,
       resolution_bind_group,
     }
@@ -225,12 +192,8 @@ impl Video {
   }
 
   pub fn render(&mut self) -> Result<(), wgpu::SurfaceError> {
-    // update our vertex buffer with latest screen state
-    self.queue.write_buffer(
-      &self.vertex_buffer,
-      0,
-      bytemuck::cast_slice(self.screen.vertices()),
-    );
+    // update screen colors from its buffer state
+    self.screen.write_buffer(&mut self.queue);
 
     // first grab a frame to render
     let output = self.surface.get_current_texture()?;
@@ -264,8 +227,9 @@ impl Video {
 
       render_pass.set_pipeline(&self.render_pipeline);
       render_pass.set_bind_group(0, &self.resolution_bind_group, &[]);
-      render_pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
-      render_pass.draw(0..self.num_vertices, 0..1);
+      render_pass.set_bind_group(1, &self.screen.bind_group(), &[]);
+      // render_pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
+      render_pass.draw(0..6, 0..1);
     }
 
     // draw to screen

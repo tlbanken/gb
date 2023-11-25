@@ -1,6 +1,6 @@
 //! Screen for the gameboy emulator
 
-use crate::geometry::{Color, Pos, Resolution, Triangle, Vertex};
+use wgpu::util::DeviceExt;
 
 const GB_RESOLUTION: Resolution = Resolution {
   width: 160,
@@ -9,119 +9,118 @@ const GB_RESOLUTION: Resolution = Resolution {
 
 const NUM_PIXELS: usize = (GB_RESOLUTION.width * GB_RESOLUTION.height) as usize;
 
-// 2 triangles with 3 vertices each
-const NUM_VERTICES_IN_PIXEL: usize = 2 * 3;
-
-// monochrome colors
 const PIXEL_CLEAR: Color = Color {
   r: 1.0,
   g: 0.0,
   b: 0.0,
+  a: 1.0,
 };
 
 #[repr(C)]
 #[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]
-/// A gameboy pixel is a square, which is made up of 2 triangles.
-struct Pixel {
-  tris: [Triangle; 2],
+pub struct Resolution {
+  pub width: u32,
+  pub height: u32,
 }
 
-impl Pixel {
-  pub fn new(screen_pos: Pos, col: Color, sx: f32, sy: f32) -> Self {
-    let scaled_pos = Pos {
-      x: (screen_pos.x as f32 * sx) as u32,
-      y: (screen_pos.y as f32 * sy) as u32,
-    };
-    // TODO: not sure if this ceil() overlap pixels when screen is not multiple of
-    // gb resolution
-    let sx = sx.ceil();
-    let sy = sy.ceil();
-    let bot_left = Pos {
-      x: scaled_pos.x,
-      y: scaled_pos.y,
-    };
-    let top_left = Pos {
-      x: scaled_pos.x,
-      y: scaled_pos.y + sy as u32,
-    };
-    let top_right = Pos {
-      x: scaled_pos.x + sx as u32,
-      y: scaled_pos.y + sy as u32,
-    };
-    let bot_right = Pos {
-      x: scaled_pos.x + sx as u32,
-      y: scaled_pos.y,
-    };
-    let tri1 = Triangle {
-      vertices: [
-        Vertex { pos: top_left, col },
-        Vertex { pos: bot_left, col },
-        Vertex {
-          pos: bot_right,
-          col,
-        },
-      ],
-    };
-    let tri2 = Triangle {
-      vertices: [
-        Vertex {
-          pos: bot_right,
-          col,
-        },
-        Vertex {
-          pos: top_right,
-          col,
-        },
-        Vertex { pos: top_left, col },
-      ],
-    };
-    Self { tris: [tri1, tri2] }
-  }
+#[repr(C)]
+#[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]
+pub struct Pos {
+  pub x: u32,
+  pub y: u32,
+}
 
-  pub fn update_color(&mut self, col: Color) {
-    for tri in &mut self.tris {
-      for vertex in &mut tri.vertices {
-        (*vertex).col = col;
-      }
-    }
+#[repr(C)]
+#[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]
+pub struct Color {
+  pub r: f32,
+  pub g: f32,
+  pub b: f32,
+  // keep this for alignment
+  pub a: f32,
+}
+
+impl Color {
+  pub const fn new(r: f32, g: f32, b: f32) -> Self {
+    Self { r, g, b, a: 1.0 }
   }
 }
 
 pub struct Screen {
-  pixels: Vec<Pixel>,
+  pixels: Vec<Color>,
+  pixels_bind_group: wgpu::BindGroup,
+  pixels_bind_group_layout: wgpu::BindGroupLayout,
+  pixels_buffer: wgpu::Buffer,
 }
 
 impl Screen {
-  pub fn new(window_resolution: Resolution) -> Self {
-    // let pixel_size = Pos {
-    //   x: window_resolution.width / GB_RESOLUTION.width,
-    //   y: window_resolution.height / GB_RESOLUTION.height,
-    // };
-    let sx = window_resolution.width as f32 / GB_RESOLUTION.width as f32;
-    let sy = window_resolution.height as f32 / GB_RESOLUTION.height as f32;
+  pub fn new(device: &wgpu::Device) -> Self {
+    // set up initial pixels
     let mut pixels = Vec::new();
-    for y in 0..GB_RESOLUTION.height {
-      for x in 0..GB_RESOLUTION.width {
-        pixels.push(Pixel::new(Pos { x, y }, PIXEL_CLEAR, sx, sy));
+    for _ in 0..GB_RESOLUTION.height {
+      for _ in 0..GB_RESOLUTION.width {
+        pixels.push(PIXEL_CLEAR);
       }
     }
-    Self { pixels }
+
+    // set up storage buffer to pass screen colors to gpu
+    let pixels_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+      label: Some("Pixels Storage Buffer"),
+      contents: bytemuck::cast_slice(&pixels.as_slice()),
+      usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+    });
+
+    let pixels_bind_group_layout =
+      device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        entries: &[wgpu::BindGroupLayoutEntry {
+          binding: 0,
+          visibility: wgpu::ShaderStages::FRAGMENT,
+          ty: wgpu::BindingType::Buffer {
+            ty: wgpu::BufferBindingType::Storage { read_only: true },
+            has_dynamic_offset: false,
+            min_binding_size: None,
+          },
+          count: None,
+        }],
+        label: Some("pixels_bind_group_layout"),
+      });
+
+    let pixels_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+      label: Some("pixels_bind_group"),
+      layout: &pixels_bind_group_layout,
+      entries: &[wgpu::BindGroupEntry {
+        binding: 0,
+        resource: pixels_buffer.as_entire_binding(),
+      }],
+    });
+
+    Self {
+      pixels,
+      pixels_bind_group,
+      pixels_bind_group_layout,
+      pixels_buffer,
+    }
   }
 
-  /// Grab a reference to the raw vertices in the screen. This can be passed to
-  /// a vertex buffer.
-  pub fn vertices(&self) -> &[Vertex] {
-    unsafe {
-      std::slice::from_raw_parts(
-        self.pixels.as_ptr() as *const Vertex,
-        self.pixels.len() * NUM_VERTICES_IN_PIXEL,
-      )
-    }
+  pub fn group_layout(&self) -> &wgpu::BindGroupLayout {
+    &self.pixels_bind_group_layout
+  }
+
+  pub fn bind_group(&mut self) -> &wgpu::BindGroup {
+    &self.pixels_bind_group
+  }
+
+  pub fn write_buffer(&mut self, queue: &mut wgpu::Queue) {
+    queue.write_buffer(
+      &self.pixels_buffer,
+      0,
+      bytemuck::cast_slice(self.pixels.as_slice()),
+    );
   }
 
   pub fn set_pixel(&mut self, pos: Pos, col: Color) {
     assert!(pos.x < GB_RESOLUTION.width);
     assert!(pos.y < GB_RESOLUTION.height);
-    self.pixels[(pos.y * GB_RESOLUTION.width + pos.x) as usize].update_color(col);
+    self.pixels[(pos.y * GB_RESOLUTION.width + pos.x) as usize] = col;
   }
 }
