@@ -98,7 +98,7 @@ impl Video {
     let resolution_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
       label: Some("Uniform Buffer"),
       contents: bytemuck::cast_slice(&[size]),
-      usage: wgpu::BufferUsages::UNIFORM,
+      usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
     });
 
     let resolution_bind_group_layout =
@@ -237,5 +237,24 @@ impl Video {
     output.present();
 
     Ok(())
+  }
+
+  pub fn resize(&mut self, new_size: winit::dpi::PhysicalSize<u32>) {
+    if new_size.width > 0 && new_size.height > 0 {
+      self.size = Resolution {
+        width: new_size.width,
+        height: new_size.height,
+      };
+      self.config.width = new_size.width;
+      self.config.height = new_size.height;
+      self.surface.configure(&self.device, &self.config);
+
+      // update gpu shader variables
+      self.queue.write_buffer(
+        &self.resolution_buffer,
+        0,
+        bytemuck::cast_slice(&[self.size]),
+      );
+    }
   }
 }

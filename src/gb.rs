@@ -2,8 +2,6 @@
 
 #[allow(unused)]
 use log::{debug, error, info, trace, warn, LevelFilter};
-// use wgpu::{Backends, Instance, InstanceDescriptor};
-// use winit::raw_window_handle::HasWindowHandle;
 
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -29,8 +27,6 @@ use winit::{
 static mut LOGGER: Logger = Logger::const_default();
 
 // window constants
-// const INITIAL_WIDTH: u32 = 1920;
-// const INITIAL_HEIGHT: u32 = 1080;
 const SCALE_FACTOR: u32 = 10;
 const INITIAL_WIDTH: u32 = 160 * SCALE_FACTOR;
 const INITIAL_HEIGHT: u32 = 144 * SCALE_FACTOR;
@@ -99,7 +95,7 @@ impl Gameboy {
       .unwrap();
     let window = WindowBuilder::new()
       .with_decorations(true)
-      .with_resizable(false)
+      .with_resizable(true)
       .with_transparent(false)
       .with_title("Gameboy Emulator")
       .with_inner_size(winit::dpi::PhysicalSize {
@@ -156,6 +152,12 @@ impl Gameboy {
         ..
       } => {
         elwt.exit();
+      }
+      Event::WindowEvent {
+        event: WindowEvent::Resized(size),
+        ..
+      } => {
+        self.video.as_mut().unwrap().resize(size);
       }
       _ => (),
     }

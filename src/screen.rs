@@ -70,6 +70,7 @@ impl Screen {
       usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
     });
 
+    // set up uniform buffer to pass gameboy screen resolution to gpu
     let screen_res_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
       label: Some("Screen Resolution Uniform Buffer"),
       contents: bytemuck::cast_slice(&[GB_RESOLUTION]),
