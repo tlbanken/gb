@@ -13,6 +13,7 @@ use crate::cart::Cartridge;
 use crate::cpu::Cpu;
 use crate::err::{GbError, GbErrorType, GbResult};
 use crate::gb_err;
+use crate::geometry::{Color, Pos};
 use crate::logger::Logger;
 use crate::ram::*;
 use crate::video::Video;
@@ -28,8 +29,11 @@ use winit::{
 static mut LOGGER: Logger = Logger::const_default();
 
 // window constants
-const INITIAL_WIDTH: u32 = 800;
-const INITIAL_HEIGHT: u32 = 600;
+const INITIAL_WIDTH: u32 = 1920;
+const INITIAL_HEIGHT: u32 = 1080;
+// const SCALE_FACTOR: u32 = 10;
+// const INITIAL_WIDTH: u32 = 160 * SCALE_FACTOR;
+// const INITIAL_HEIGHT: u32 = 144 * SCALE_FACTOR;
 
 struct DebugState {
   pub halt: bool,
@@ -120,6 +124,27 @@ impl Gameboy {
         if !debug_state.halt || (debug_state.halt && debug_state.step) {
           self.step().unwrap();
         }
+
+        self
+          .video
+          .as_mut()
+          .unwrap()
+          .set_pixel(Pos { x: 159, y: 141 }, Color::new(1.0, 1.0, 0.0));
+        self
+          .video
+          .as_mut()
+          .unwrap()
+          .set_pixel(Pos { x: 158, y: 142 }, Color::new(0.0, 0.0, 1.0));
+        self
+          .video
+          .as_mut()
+          .unwrap()
+          .set_pixel(Pos { x: 159, y: 143 }, Color::new(0.0, 1.0, 0.0));
+        self
+          .video
+          .as_mut()
+          .unwrap()
+          .set_pixel(Pos { x: 159, y: 142 }, Color::new(0.0, 0.0, 1.0));
 
         // draw the window
         self.video.as_mut().unwrap().render().unwrap();
