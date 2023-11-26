@@ -4,17 +4,19 @@ mod bus;
 mod cart;
 mod cpu;
 mod err;
+mod event;
 mod gb;
 mod logger;
 mod ram;
 mod screen;
+mod state;
+mod ui;
 mod util;
 mod video;
 
 use log::LevelFilter;
 
-#[tokio::main]
-async fn main() {
+fn main() {
   println!("~~~ Enter the Gameboy Emulation ~~~");
 
   // set the max through compile time config in Cargo.toml
@@ -25,5 +27,5 @@ async fn main() {
   gameboy.init().unwrap();
 
   // start the emulation
-  gameboy.run().await.unwrap();
+  gameboy.run().unwrap();
 }

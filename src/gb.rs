@@ -10,18 +10,22 @@ use crate::bus::*;
 use crate::cart::Cartridge;
 use crate::cpu::Cpu;
 use crate::err::{GbError, GbErrorType, GbResult};
+use crate::event::UserEvent;
 use crate::gb_err;
 use crate::logger::Logger;
 use crate::ram::*;
 use crate::screen::{Color, Pos};
+use crate::state::GbState;
+use crate::ui::Ui;
 use crate::video::Video;
 
-use winit::event_loop::{EventLoopBuilder, EventLoopWindowTarget};
-// use winit::window::Window;
-use winit::{
+use egui;
+use egui_winit::winit;
+use egui_winit::winit::event_loop::{EventLoopBuilder, EventLoopWindowTarget};
+use egui_winit::winit::{
   event::{Event, WindowEvent},
   event_loop::ControlFlow,
-  window::WindowBuilder,
+  window::{Window, WindowBuilder},
 };
 
 static mut LOGGER: Logger = Logger::const_default();
@@ -31,23 +35,9 @@ const SCALE_FACTOR: u32 = 10;
 const INITIAL_WIDTH: u32 = 160 * SCALE_FACTOR;
 const INITIAL_HEIGHT: u32 = 144 * SCALE_FACTOR;
 
-struct DebugState {
-  pub halt: bool,
-  pub step: bool,
-}
-
-// custom events for emulation flow
-enum GbEvent {
-  RequestRedraw,
-}
-
 pub struct Gameboy {
   is_init: bool,
-  bus: Rc<RefCell<Bus>>,
-  eram: Rc<RefCell<Ram>>,
-  wram: Rc<RefCell<Ram>>,
-  cart: Rc<RefCell<Cartridge>>,
-  cpu: Cpu,
+  state: GbState,
   video: Option<Video>,
 }
 
@@ -55,13 +45,17 @@ impl Gameboy {
   pub fn new(level_filter: LevelFilter) -> Gameboy {
     init_logging(level_filter);
 
-    Gameboy {
-      is_init: false,
+    let state = GbState {
       bus: Rc::new(RefCell::new(Bus::new())),
       eram: Rc::new(RefCell::new(Ram::new(8 * 1024))),
       wram: Rc::new(RefCell::new(Ram::new(8 * 1024))),
       cart: Rc::new(RefCell::new(Cartridge::new())),
-      cpu: Cpu::new(),
+      cpu: Rc::new(RefCell::new(Cpu::new())),
+    };
+
+    Gameboy {
+      state,
+      is_init: false,
       video: None,
     }
   }
@@ -69,30 +63,20 @@ impl Gameboy {
   pub fn init(&mut self) -> GbResult<()> {
     info!("Initializing system");
 
-    // TODO: load cartridge
-
-    // connect Bus to memory
-    self.bus.borrow_mut().connect_eram(self.eram.clone())?;
-    self.bus.borrow_mut().connect_wram(self.wram.clone())?;
-    self.bus.borrow_mut().connect_cartridge(self.cart.clone())?;
-
-    // connect modules to bus
-    self.cpu.connect_bus(self.bus.clone())?;
+    self.state.init();
 
     self.is_init = true;
     Ok(())
   }
 
-  pub async fn run(mut self) -> GbResult<()> {
+  pub fn run(mut self) -> GbResult<()> {
     if !self.is_init {
       return gb_err!(GbErrorType::NotInitialized);
     }
     info!("Starting emulation");
 
     // build event loop and window with custom event support
-    let event_loop = EventLoopBuilder::<GbEvent>::with_user_event()
-      .build()
-      .unwrap();
+    let event_loop = EventLoopBuilder::<UserEvent>::with_user_event().build();
     let window = WindowBuilder::new()
       .with_decorations(true)
       .with_resizable(true)
@@ -105,69 +89,58 @@ impl Gameboy {
       .build(&event_loop)
       .unwrap();
 
-    self.video = Some(Video::new(window).await);
+    // setup ui
+    let ui = Ui::new(event_loop.create_proxy());
+
+    // setup render backend
+    self.video = Some(pollster::block_on(Video::new(window, ui)));
 
     // run as fast as possible
-    event_loop.set_control_flow(ControlFlow::Poll);
-    event_loop
-      .run(|event, elwt| {
-        self.handle_events(event, elwt);
+    event_loop.run(move |event, _, control_flow| {
+      // run as fast as possible
+      control_flow.set_poll();
 
-        // update the debug view
-        let debug_state = self.update_debug().unwrap();
+      let should_redraw = self.handle_events(event, control_flow);
 
-        // system step
-        if !debug_state.halt || (debug_state.halt && debug_state.step) {
-          self.step().unwrap();
+      // system step
+      // self.state.step().unwrap();
+
+      // demo draw
+      for y in 0..144 {
+        for x in 0..160 {
+          self.video.as_mut().unwrap().set_pixel(
+            Pos { x, y },
+            Color::new(y as f32 / 144.0, x as f32 / 160.0, 0.0),
+          );
         }
+      }
 
-        // demo draw
-        for y in 0..144 {
-          for x in 0..160 {
-            self.video.as_mut().unwrap().set_pixel(
-              Pos { x, y },
-              Color::new(y as f32 / 144.0, x as f32 / 160.0, 0.0),
-            );
-          }
-        }
-
-        // draw the window
+      // draw the window
+      if should_redraw {
         self.video.as_mut().unwrap().render().unwrap();
-      })
-      .unwrap();
-
-    info!("Exiting emulation :)");
-    Ok(())
+      }
+    });
+    // no return
   }
 
-  fn step(&mut self) -> GbResult<()> {
-    self.cpu.step()?;
-    Ok(())
-  }
-
-  fn handle_events<T>(&mut self, event: Event<T>, elwt: &EventLoopWindowTarget<T>) {
+  fn handle_events<T>(&mut self, event: Event<T>, control_flow: &mut ControlFlow) -> bool {
     match event {
+      // window events
       Event::WindowEvent {
-        event: WindowEvent::CloseRequested,
-        ..
+        event: wevent,
+        window_id: _,
       } => {
-        elwt.exit();
+        match wevent {
+          WindowEvent::CloseRequested => {
+            control_flow.set_exit();
+          }
+          _ => (),
+        };
+        self.video.as_mut().unwrap().handle_window_event(wevent)
       }
-      Event::WindowEvent {
-        event: WindowEvent::Resized(size),
-        ..
-      } => {
-        self.video.as_mut().unwrap().resize(size);
-      }
-      _ => (),
+      Event::RedrawRequested(_) => true,
+      _ => false,
     }
-  }
-
-  fn update_debug(&mut self) -> GbResult<DebugState> {
-    Ok(DebugState {
-      halt: true,
-      step: false,
-    })
   }
 }
 

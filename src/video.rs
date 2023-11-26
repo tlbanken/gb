@@ -1,9 +1,16 @@
 //! Helper object for video rendering and drawing
 
-use wgpu::util::DeviceExt;
-use winit::window::Window;
+use egui;
+use egui_wgpu::renderer::ScreenDescriptor;
+use egui_wgpu::wgpu::util::DeviceExt;
+use egui_wgpu::wgpu::TextureView;
+use egui_wgpu::{wgpu, WgpuConfiguration};
+use egui_winit::winit;
+use egui_winit::winit::event::WindowEvent;
+use egui_winit::winit::window::Window;
 
 use crate::screen::{Color, Pos, Resolution, Screen};
+use crate::ui::Ui;
 
 const CLEAR_COLOR: wgpu::Color = wgpu::Color {
   r: 0.0,
@@ -22,6 +29,9 @@ pub struct Video {
   render_pipeline: wgpu::RenderPipeline,
   resolution_buffer: wgpu::Buffer,
   resolution_bind_group: wgpu::BindGroup,
+  egui_renderer: egui_wgpu::Renderer,
+  ui: Ui,
+  egui_state: egui_winit::State,
   // The window must be declared after the surface so
   // it gets dropped after it as the surface contains
   // unsafe references to the window's resources.
@@ -29,7 +39,7 @@ pub struct Video {
 }
 
 impl Video {
-  pub async fn new(window: Window) -> Self {
+  pub async fn new(window: Window, ui: Ui) -> Self {
     let size = Resolution {
       width: window.inner_size().width,
       height: window.inner_size().height,
@@ -169,6 +179,15 @@ impl Video {
       multiview: None,
     });
 
+    // set up egui
+    let egui_state = egui_winit::State::new(
+      ui.context().viewport_id(),
+      &window,
+      ui.context().native_pixels_per_point(),
+      None,
+    );
+    let egui_renderer = egui_wgpu::Renderer::new(&device, config.format, None, 1);
+
     Self {
       screen,
       window,
@@ -180,11 +199,31 @@ impl Video {
       render_pipeline,
       resolution_buffer,
       resolution_bind_group,
+      egui_renderer,
+      ui,
+      egui_state,
     }
   }
 
   pub fn window(&self) -> &Window {
     &self.window
+  }
+
+  pub fn handle_window_event(&mut self, event: WindowEvent) -> bool {
+    let gb_repaint = match event {
+      WindowEvent::Resized(size) => {
+        self.resize(size);
+        true
+      }
+      _ => false,
+    };
+    let ui_repaint = self
+      .egui_state
+      .on_window_event(self.ui.context(), &event)
+      .repaint;
+
+    // repaint if either requests it
+    gb_repaint || ui_repaint
   }
 
   pub fn set_pixel(&mut self, pos: Pos, col: Color) {
@@ -200,6 +239,19 @@ impl Video {
     let view = output
       .texture
       .create_view(&wgpu::TextureViewDescriptor::default());
+
+    // first render gameboy data
+    self.render_gameboy(&view);
+
+    // now render egui
+    self.render_ui(&view);
+
+    // finally, draw to the screen
+    output.present();
+    Ok(())
+  }
+
+  fn render_gameboy(&mut self, view: &TextureView) {
     // build encoder for sending commands to the gpu
     let mut encoder = self
       .device
@@ -212,7 +264,7 @@ impl Video {
     {
       // create the render pass
       let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-        label: Some("Render Pass"),
+        label: Some("Main Render Pass"),
         color_attachments: &[Some(wgpu::RenderPassColorAttachment {
           view: &view,
           resolve_target: None,
@@ -228,18 +280,70 @@ impl Video {
       render_pass.set_pipeline(&self.render_pipeline);
       render_pass.set_bind_group(0, &self.resolution_bind_group, &[]);
       render_pass.set_bind_group(1, &self.screen.bind_group(), &[]);
-      // render_pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
       render_pass.draw(0..6, 0..1);
     }
 
-    // draw to screen
+    // submit render requests to queue
     self.queue.submit(std::iter::once(encoder.finish()));
-    output.present();
-
-    Ok(())
   }
 
-  pub fn resize(&mut self, new_size: winit::dpi::PhysicalSize<u32>) {
+  fn render_ui(&mut self, view: &TextureView) {
+    let raw_input = self.egui_state.take_egui_input(&self.window);
+    let full_output = self.ui.prepare(raw_input);
+    for (id, delta) in &full_output.textures_delta.set {
+      self
+        .egui_renderer
+        .update_texture(&self.device, &self.queue, *id, &delta);
+    }
+    self.egui_state.handle_platform_output(
+      &self.window,
+      self.ui.context(),
+      full_output.platform_output,
+    );
+    let clipped_prims = &self
+      .ui
+      .context()
+      .tessellate(full_output.shapes, self.ui.context().pixels_per_point());
+    let screen_descriptor = ScreenDescriptor {
+      size_in_pixels: [self.size.width as u32, self.size.height as u32],
+      pixels_per_point: self.window.scale_factor() as f32,
+    };
+    let mut encoder = self
+      .device
+      .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+        label: Some("UI Encoder"),
+      });
+    // ui render pass
+    {
+      self.egui_renderer.update_buffers(
+        &self.device,
+        &self.queue,
+        &mut encoder,
+        &clipped_prims,
+        &screen_descriptor,
+      );
+
+      let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+        label: Some("Egui Render Pass"),
+        color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+          view,
+          resolve_target: None,
+          ops: wgpu::Operations {
+            load: wgpu::LoadOp::Load,
+            store: wgpu::StoreOp::Store,
+          },
+        })],
+        depth_stencil_attachment: None,
+        ..Default::default()
+      });
+      self
+        .egui_renderer
+        .render(&mut render_pass, &clipped_prims, &screen_descriptor);
+    }
+    self.queue.submit(std::iter::once(encoder.finish()));
+  }
+
+  fn resize(&mut self, new_size: winit::dpi::PhysicalSize<u32>) {
     if new_size.width > 0 && new_size.height > 0 {
       self.size = Resolution {
         width: new_size.width,
