@@ -1,10 +1,12 @@
 //! Main gameboy system module
 
+use egui_winit::winit::dpi::{LogicalSize, PhysicalSize};
 #[allow(unused)]
 use log::{debug, error, info, trace, warn, LevelFilter};
 
 use std::cell::RefCell;
 use std::rc::Rc;
+use std::time::Instant;
 
 use crate::bus::*;
 use crate::cart::Cartridge;
@@ -35,6 +37,9 @@ const SCALE_FACTOR: u32 = 10;
 const INITIAL_WIDTH: u32 = 160 * SCALE_FACTOR;
 const INITIAL_HEIGHT: u32 = 144 * SCALE_FACTOR;
 
+// target frame time (60 fps)
+const TARGET_FRAME_TIME_MS: u128 = 1000 / 60;
+
 pub struct Gameboy {
   is_init: bool,
   state: GbState,
@@ -63,7 +68,7 @@ impl Gameboy {
   pub fn init(&mut self) -> GbResult<()> {
     info!("Initializing system");
 
-    self.state.init();
+    self.state.init()?;
 
     self.is_init = true;
     Ok(())
@@ -95,12 +100,14 @@ impl Gameboy {
     // setup render backend
     self.video = Some(pollster::block_on(Video::new(window, ui)));
 
+    let mut last_render = Instant::now();
     // run as fast as possible
     event_loop.run(move |event, _, control_flow| {
       // run as fast as possible
       control_flow.set_poll();
 
-      let should_redraw = self.handle_events(event, control_flow);
+      let mut should_redraw = self.handle_events(event, control_flow);
+      should_redraw = false;
 
       // system step
       // self.state.step().unwrap();
@@ -115,15 +122,28 @@ impl Gameboy {
         }
       }
 
-      // draw the window
+      // TODO: find better pace for rendering
+      // draw the window at least every 1/60 of a second
+      let now = Instant::now();
+      let dtime = now - last_render;
+      if dtime.as_millis() > TARGET_FRAME_TIME_MS {
+        last_render = now;
+        should_redraw = true;
+      }
+
       if should_redraw {
-        self.video.as_mut().unwrap().render().unwrap();
+        self
+          .video
+          .as_mut()
+          .unwrap()
+          .render(&mut self.state)
+          .unwrap();
       }
     });
     // no return
   }
 
-  fn handle_events<T>(&mut self, event: Event<T>, control_flow: &mut ControlFlow) -> bool {
+  fn handle_events(&mut self, event: Event<UserEvent>, control_flow: &mut ControlFlow) -> bool {
     match event {
       // window events
       Event::WindowEvent {
@@ -139,6 +159,18 @@ impl Gameboy {
         self.video.as_mut().unwrap().handle_window_event(wevent)
       }
       Event::RedrawRequested(_) => true,
+      Event::UserEvent(event) => match event {
+        UserEvent::RequestResize(w, h) => {
+          self
+            .video
+            .as_mut()
+            .unwrap()
+            .window()
+            .set_inner_size(PhysicalSize::new(w as f32, h as f32));
+          true
+        }
+        _ => false,
+      },
       _ => false,
     }
   }

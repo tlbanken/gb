@@ -1,5 +1,6 @@
 //! Events for the Emulator
 
+#[derive(Debug)]
 pub enum UserEvent {
-  // TODO
+  RequestResize(u32, u32),
 }

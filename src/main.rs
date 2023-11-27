@@ -5,6 +5,7 @@ mod cart;
 mod cpu;
 mod err;
 mod event;
+mod fps;
 mod gb;
 mod logger;
 mod ram;

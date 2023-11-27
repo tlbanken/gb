@@ -9,8 +9,10 @@ use egui_winit::winit;
 use egui_winit::winit::event::WindowEvent;
 use egui_winit::winit::window::Window;
 
+use crate::fps::Fps;
 use crate::screen::{Color, Pos, Resolution, Screen};
-use crate::ui::Ui;
+use crate::state::GbState;
+use crate::ui::{Ui, UiState};
 
 const CLEAR_COLOR: wgpu::Color = wgpu::Color {
   r: 0.0,
@@ -32,6 +34,8 @@ pub struct Video {
   egui_renderer: egui_wgpu::Renderer,
   ui: Ui,
   egui_state: egui_winit::State,
+  ui_state: UiState,
+  fps: Fps,
   // The window must be declared after the surface so
   // it gets dropped after it as the surface contains
   // unsafe references to the window's resources.
@@ -187,6 +191,9 @@ impl Video {
       None,
     );
     let egui_renderer = egui_wgpu::Renderer::new(&device, config.format, None, 1);
+    let ui_state = UiState::new();
+
+    let fps = Fps::new();
 
     Self {
       screen,
@@ -201,7 +208,9 @@ impl Video {
       resolution_bind_group,
       egui_renderer,
       ui,
+      ui_state,
       egui_state,
+      fps,
     }
   }
 
@@ -230,7 +239,9 @@ impl Video {
     self.screen.set_pixel(pos, col);
   }
 
-  pub fn render(&mut self) -> Result<(), wgpu::SurfaceError> {
+  pub fn render(&mut self, gb_state: &mut GbState) -> Result<(), wgpu::SurfaceError> {
+    self.fps.tick();
+
     // update screen colors from its buffer state
     self.screen.write_buffer(&mut self.queue);
 
@@ -244,7 +255,7 @@ impl Video {
     self.render_gameboy(&view);
 
     // now render egui
-    self.render_ui(&view);
+    self.render_ui(&view, gb_state, self.fps.fps());
 
     // finally, draw to the screen
     output.present();
@@ -287,9 +298,11 @@ impl Video {
     self.queue.submit(std::iter::once(encoder.finish()));
   }
 
-  fn render_ui(&mut self, view: &TextureView) {
+  fn render_ui(&mut self, view: &TextureView, gb_state: &mut GbState, fps: u32) {
     let raw_input = self.egui_state.take_egui_input(&self.window);
-    let full_output = self.ui.prepare(raw_input);
+    let full_output = self
+      .ui
+      .prepare(raw_input, &mut self.ui_state, gb_state, fps);
     for (id, delta) in &full_output.textures_delta.set {
       self
         .egui_renderer

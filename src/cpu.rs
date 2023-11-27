@@ -17,12 +17,12 @@ type DispatchFn = fn(&mut Cpu, instr: u8) -> GbResult<()>;
 
 pub struct Cpu {
   // registers: named as HiLo (A F -> Hi Lo)
-  af: Register,
-  bc: Register,
-  de: Register,
-  hl: Register,
-  sp: u16,
-  pc: u16,
+  pub af: Register,
+  pub bc: Register,
+  pub de: Register,
+  pub hl: Register,
+  pub sp: u16,
+  pub pc: u16,
   bus: Option<Rc<RefCell<Bus>>>,
 
   // instruction dispatchers
@@ -30,7 +30,7 @@ pub struct Cpu {
   dispatcher_cb: Vec<DispatchFn>,
 }
 
-struct Register {
+pub struct Register {
   pub lo: u8,
   pub hi: u8,
 }
