@@ -86,7 +86,7 @@ impl Gameboy {
       .with_decorations(true)
       .with_resizable(true)
       .with_transparent(false)
-      .with_title("Gameboy Emulator")
+      .with_title("~ Enter the Gameboy Emulation ~")
       .with_inner_size(winit::dpi::PhysicalSize {
         width: INITIAL_WIDTH,
         height: INITIAL_HEIGHT,

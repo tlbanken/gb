@@ -1,9 +1,50 @@
 //! Debug ui for the emulator
 
-use egui::{self, epaint::Shadow, Context, FullOutput, RawInput, Style, Visuals};
+use egui::{
+  self, epaint::Shadow, Color32, Context, FullOutput, RawInput, RichText, Style, Visuals,
+};
 use egui_winit::winit::event_loop::EventLoopProxy;
+use std::collections::VecDeque;
 
+use crate::dasm::Dasm;
+use crate::util::LazyDref;
 use crate::{cpu::Cpu, event::UserEvent, state::GbState};
+
+const DASM_CAP: usize = 5;
+
+struct InstrDasm {
+  name: String,
+  raw: Vec<u8>,
+}
+
+struct DasmHistory {
+  cap: usize,
+  data: VecDeque<InstrDasm>,
+}
+
+impl DasmHistory {
+  pub fn new(cap: usize) -> DasmHistory {
+    DasmHistory {
+      data: VecDeque::new(),
+      cap,
+    }
+  }
+
+  pub fn len(&self) -> usize {
+    self.data.len()
+  }
+
+  pub fn push(&mut self, entry: InstrDasm) {
+    self.data.push_front(entry);
+    if self.data.len() > self.cap {
+      self.data.pop_back();
+    }
+  }
+
+  pub fn entries(&self) -> &VecDeque<InstrDasm> {
+    &self.data
+  }
+}
 
 pub struct UiState {
   pub show_menu_bar: bool,
@@ -32,6 +73,7 @@ impl UiState {
 pub struct Ui {
   context: Context,
   event_loop_proxy: EventLoopProxy<UserEvent>,
+  dasm_history: DasmHistory,
 }
 
 impl Ui {
@@ -52,6 +94,7 @@ impl Ui {
     Self {
       context,
       event_loop_proxy,
+      dasm_history: DasmHistory::new(DASM_CAP),
     }
   }
 
@@ -124,7 +167,7 @@ impl Ui {
       self.ui_cpu_reg(ctx, &mut gb_state.cpu.borrow_mut());
     }
     if ui_state.show_cpu_dasm_window {
-      self.ui_cpu_dasm(ctx);
+      self.ui_cpu_dasm(ctx, &gb_state.cpu.borrow());
     }
     if ui_state.show_eram_window {
       self.ui_eram(ctx);
@@ -147,11 +190,58 @@ impl Ui {
     });
   }
 
-  fn ui_cpu_dasm(&self, ctx: &Context) {
+  fn ui_cpu_dasm(&self, ctx: &Context, cpu: &Cpu) {
     egui::Window::new("Disassembly").show(ctx, |ui| {
-      // TODO
-      ui.monospace("I am a CPU Dasm");
+      let mut vpc = cpu.pc;
+      let mut dasm = Dasm::new();
+
+      // first print history
+      for _ in 0..(DASM_CAP - self.dasm_history.len()) {
+        // empty line
+        ui.monospace("");
+      }
+      for instr in self.dasm_history.entries() {
+        ui.monospace(format!("{:8} {:10} ", "", instr.name));
+        vpc = self.show_dasm_line(cpu, ui, vpc, &mut dasm, Color32::DARK_GRAY);
+      }
+
+      // print current instruction
+      vpc = self.show_dasm_line(cpu, ui, vpc, &mut dasm, Color32::GRAY);
+      // TODO: save to history
+
+      for i in 0..DASM_CAP {
+        vpc = self.show_dasm_line(cpu, ui, vpc, &mut dasm, Color32::DARK_GRAY);
+      }
     });
+  }
+
+  fn show_dasm_line(
+    &self,
+    cpu: &Cpu,
+    ui: &mut egui::Ui,
+    mut vpc: u16,
+    dasm: &mut Dasm,
+    color: Color32,
+  ) -> u16 {
+    let start_pc = vpc;
+    let mut raw_bytes = Vec::<u8>::new();
+    loop {
+      let byte = cpu.bus.lazy_dref().read(vpc).unwrap();
+      raw_bytes.push(byte);
+      vpc += 1;
+      if let Some(instr) = dasm.munch(byte) {
+        let mut output = format!("PC:{:04X}  ", start_pc);
+        let mut raw_bytes_str = String::new();
+        for b in raw_bytes {
+          raw_bytes_str.push_str(format!("{:02X} ", b).as_str());
+        }
+        output.push_str(format!("{:9} ", raw_bytes_str).as_str());
+        output.push_str(format!("{:10}", instr).as_str());
+        ui.monospace(RichText::new(output).color(color));
+        break;
+      }
+    }
+    vpc
   }
 
   fn ui_eram(&self, ctx: &Context) {

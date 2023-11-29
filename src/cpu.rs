@@ -23,7 +23,7 @@ pub struct Cpu {
   pub hl: Register,
   pub sp: u16,
   pub pc: u16,
-  bus: Option<Rc<RefCell<Bus>>>,
+  pub bus: Option<Rc<RefCell<Bus>>>,
 
   // instruction dispatchers
   dispatcher: Vec<DispatchFn>,
