@@ -100,14 +100,14 @@ impl Cpu {
       /* 18 */ Self::jr_r8,       /* 19 */ Self::add_hl_de, /* 1A */ Self::ld_a__de_,  /* 1B */ Self::dec_de,
       /* 1C */ Self::inc_e,       /* 1D */ Self::dec_e,     /* 1E */ Self::ld_e_d8,    /* 1F */ Self::rra,
 
-      /* 20 */ Self::jr_nz_r8,    /* 21 */ Self::ld_hl_d16, /* 22 */ Self::ld__hlp__a, /* 23 */ Self::inc_hl,
+      /* 20 */ Self::jr_nz_r8,    /* 21 */ Self::ld_hl_d16, /* 22 */ Self::ld__hli__a, /* 23 */ Self::inc_hl,
       /* 24 */ Self::inc_h,       /* 25 */ Self::dec_h,     /* 26 */ Self::ld_h_d8,    /* 27 */ Self::daa,
-      /* 28 */ Self::jr_z_r8,     /* 29 */ Self::add_hl_hl, /* 2A */ Self::ld_a__hlp_, /* 2B */ Self::dec_hl,
+      /* 28 */ Self::jr_z_r8,     /* 29 */ Self::add_hl_hl, /* 2A */ Self::ld_a__hli_, /* 2B */ Self::dec_hl,
       /* 2C */ Self::inc_l,       /* 2D */ Self::dec_l,     /* 2E */ Self::ld_l_d8,    /* 2F */ Self::cpl,
 
-      /* 30 */ Self::jr_nc_r8,    /* 31 */ Self::ld_sp_d16, /* 32 */ Self::ld__hlm__a, /* 33 */ Self::inc_sp,
+      /* 30 */ Self::jr_nc_r8,    /* 31 */ Self::ld_sp_d16, /* 32 */ Self::ld__hld__a, /* 33 */ Self::inc_sp,
       /* 34 */ Self::inc__hl_,    /* 35 */ Self::dec__hl_,  /* 36 */ Self::ld__hl__d8, /* 37 */ Self::scf,
-      /* 38 */ Self::jr_c_r8,     /* 39 */ Self::add_hl_sp, /* 3A */ Self::ld_a__hlm_, /* 3B */ Self::dec_sp,
+      /* 38 */ Self::jr_c_r8,     /* 39 */ Self::add_hl_sp, /* 3A */ Self::ld_a__hld_, /* 3B */ Self::dec_sp,
       /* 3C */ Self::inc_a,       /* 3D */ Self::dec_a,     /* 3E */ Self::ld_a_d8,    /* 3F */ Self::ccf,
 
       /* 40 */ Self::ld_b_b,      /* 41 */ Self::ld_b_c,    /* 42 */ Self::ld_b_d,     /* 43 */ Self::ld_b_e,
@@ -353,7 +353,7 @@ impl Cpu {
     unimplemented!()
   }
 
-  fn ld__hlp__a(&mut self, instr: u8) -> GbResult<()> {
+  fn ld__hli__a(&mut self, instr: u8) -> GbResult<()> {
     unimplemented!()
   }
 
@@ -369,11 +369,11 @@ impl Cpu {
     unimplemented!()
   }
 
-  fn ld_a__hlp_(&mut self, instr: u8) -> GbResult<()> {
+  fn ld_a__hli_(&mut self, instr: u8) -> GbResult<()> {
     unimplemented!()
   }
 
-  fn ld__hlm__a(&mut self, instr: u8) -> GbResult<()> {
+  fn ld__hld__a(&mut self, instr: u8) -> GbResult<()> {
     unimplemented!()
   }
 
@@ -381,7 +381,7 @@ impl Cpu {
     unimplemented!()
   }
 
-  fn ld_a__hlm_(&mut self, instr: u8) -> GbResult<()> {
+  fn ld_a__hld_(&mut self, instr: u8) -> GbResult<()> {
     unimplemented!()
   }
 

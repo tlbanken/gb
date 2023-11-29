@@ -3,6 +3,7 @@
 mod bus;
 mod cart;
 mod cpu;
+mod dasm;
 mod err;
 mod event;
 mod fps;
