@@ -2928,7 +2928,7 @@ impl InstrDesc {
 
   pub fn d16(&self) -> u16 {
     // construct as LE
-    (self.bytes[2] as u16) << 8 | (self.bytes[1] as u16)
+    u16::from_le_bytes([self.bytes[1], self.bytes[2]])
   }
 
   pub fn a8(&self) -> u8 {

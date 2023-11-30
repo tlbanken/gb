@@ -5,10 +5,15 @@
 
 use log::error;
 use std::collections::VecDeque;
+use std::env;
+use std::fs::File;
+use std::io::Write;
+use std::path::Path;
 use std::{cell::RefCell, rc::Rc};
 
 use crate::{
   bus::Bus,
+  dasm::Dasm,
   err::{GbError, GbErrorType, GbResult},
   gb_err,
   util::LazyDref,
@@ -53,14 +58,20 @@ impl InstrHistory {
 
 pub struct Cpu {
   // registers: named as HiLo (A F -> Hi Lo)
+  /// A -> Hi, F -> Lo
   pub af: Register,
+  /// B -> Hi, C -> Lo
   pub bc: Register,
+  /// D -> Hi, E -> Lo
   pub de: Register,
+  /// H -> Hi, L -> Lo
   pub hl: Register,
   pub sp: u16,
   pub pc: u16,
   pub bus: Option<Rc<RefCell<Bus>>>,
   pub history: InstrHistory,
+  #[cfg(feature = "instr-trace")]
+  trace_file: File,
 
   // instruction dispatchers
   dispatcher: Vec<DispatchFn>,
@@ -77,7 +88,7 @@ impl Register {
     Register { lo: 0, hi: 0 }
   }
 
-  pub fn get_u16(&self) -> u16 {
+  pub fn hilo(&self) -> u16 {
     (self.lo as u16) | ((self.hi as u16) << 8)
   }
 
@@ -89,6 +100,13 @@ impl Register {
 
 impl Cpu {
   pub fn new() -> Cpu {
+    #[cfg(feature = "instr-trace")]
+    let trace_file = {
+      let mut path = env::current_exe().unwrap();
+      path.pop();
+      path.push("gb_instr_dump.txt");
+      File::create(&path).unwrap()
+    };
     Cpu {
       af: Register::new(),
       bc: Register::new(),
@@ -100,6 +118,8 @@ impl Cpu {
       dispatcher: Self::init_dispatcher(),
       dispatcher_cb: Self::init_dispatcher_cb(),
       history: InstrHistory::new(HISTORY_CAP),
+      #[cfg(feature = "instr-trace")]
+      trace_file,
     }
   }
 
@@ -114,13 +134,44 @@ impl Cpu {
 
   /// Execute one instruction
   pub fn step(&mut self) -> GbResult<()> {
+    // instruction tracing
+    #[cfg(feature = "instr-trace")]
+    {
+      let mut dasm = Dasm::new();
+      let mut raw_bytes = Vec::<u8>::new();
+      let mut vpc = self.pc;
+      let mut output = format!(" PC:{:04X}  ", vpc);
+      loop {
+        let byte = self.bus.lazy_dref().read8(vpc).unwrap();
+        raw_bytes.push(byte);
+        vpc += 1;
+        if let Some(instr) = dasm.munch(byte) {
+          let mut raw_bytes_str = String::new();
+          for b in raw_bytes {
+            raw_bytes_str.push_str(format!("{:02X} ", b).as_str());
+          }
+          output.push_str(format!("{:9} ", raw_bytes_str).as_str());
+          output.push_str(format!("{:12} ", instr).as_str());
+          break;
+        }
+      }
+      self.trace_instr(&output);
+    }
+
     // read next instruction
-    let instr = self.bus.lazy_dref().read(self.pc)?;
+    self.history.push(self.pc);
+    let instr = self.bus.lazy_dref().read8(self.pc)?;
+    self.pc += 1;
 
     // instruction dispatch
     self.dispatcher[instr as usize](self, instr)?;
 
     Ok(())
+  }
+
+  #[cfg(feature = "instr-trace")]
+  fn trace_instr(&mut self, s: &str) {
+    writeln!(self.trace_file, "{}", s).unwrap();
   }
 
   #[rustfmt::skip]
@@ -306,14 +357,28 @@ impl Cpu {
   //  0: Reset Flag to 0
   //  -: No change
 
+  // *** Helpers ***
+
+  /// Reads the next 2 bytes and constructs the imm16 value. This will modify
+  /// the pc state.
+  fn get_imm16(&mut self) -> GbResult<u16> {
+    let imm16 = self.bus.lazy_dref().read16(self.pc)?;
+    self.pc = self.pc.wrapping_add(2);
+    Ok(imm16)
+  }
+
+  /// Reads the next byte and constructs the imm8 value. This will modify
+  /// the pc state.
+  fn get_imm8(&mut self) -> GbResult<u8> {
+    let imm8 = self.bus.lazy_dref().read8(self.pc)?;
+    self.pc = self.pc.wrapping_add(1);
+    Ok(imm8)
+  }
+
   /// Unknown Instruction, returns an error
   fn badi(&mut self, instr: u8) -> GbResult<()> {
     error!("Unknown instruction: 0x{:02x}", instr);
     gb_err!(GbErrorType::InvalidCpuInstruction)
-  }
-
-  fn dispatch_cb(&mut self, instr: u8) -> GbResult<()> {
-    unimplemented!()
   }
 
   /// nop
@@ -337,30 +402,70 @@ impl Cpu {
     unimplemented!()
   }
 
-  fn prefix_cb(&mut self, instr: u8) -> GbResult<()> {
-    unimplemented!()
+  /// CB XX
+  ///
+  /// Dispatches an instruction which has the "CB" prefix.
+  fn prefix_cb(&mut self, _instr: u8) -> GbResult<()> {
+    self.pc = self.pc.wrapping_add(1);
+    let instr = self.bus.lazy_dref().read8(self.pc)?;
+    self.dispatcher_cb[instr as usize](self, instr)
   }
 
   // *** Loads/Stores ***
 
-  fn ld_bc_d16(&mut self, instr: u8) -> GbResult<()> {
-    unimplemented!()
+  /// LD BC d16
+  ///
+  /// Loads an imm16 into BC register.
+  ///
+  /// Flags: - - - -
+  fn ld_bc_d16(&mut self, _instr: u8) -> GbResult<()> {
+    let d16 = self.get_imm16()?;
+    self.bc.set_u16(d16);
+    Ok(())
   }
 
-  fn ld_b_d8(&mut self, instr: u8) -> GbResult<()> {
-    unimplemented!()
+  /// LD B d8
+  ///
+  /// Loads an imm8 into the B register.
+  ///
+  /// Flags: - - - -
+  fn ld_b_d8(&mut self, _instr: u8) -> GbResult<()> {
+    let d8 = self.get_imm8()?;
+    self.bc.hi = d8;
+    Ok(())
   }
 
+  /// LD (BC) A
+  ///
+  /// Store A into address pointed to by BC
+  ///
+  /// Flags: - - - -
   fn ld__bc__a(&mut self, instr: u8) -> GbResult<()> {
-    unimplemented!()
+    self
+      .bus
+      .lazy_dref_mut()
+      .write8(self.bc.hilo(), self.af.hi)?;
+    Ok(())
   }
 
+  /// LD A (BC)
+  ///
+  /// Load A from address pointed to by BC
+  ///
+  /// Flags: - - - -
   fn ld_a__bc_(&mut self, instr: u8) -> GbResult<()> {
-    unimplemented!()
+    self.af.hi = self.bus.lazy_dref().read8(self.bc.hilo())?;
+    Ok(())
   }
 
+  /// LD (a16) SP
+  ///
+  /// Store SP into address given by imm16
+  ///
+  /// Flags: - - - -
   fn ld__a16__sp(&mut self, instr: u8) -> GbResult<()> {
-    unimplemented!()
+    let a16 = self.get_imm16()?;
+    self.bus.lazy_dref().write16(a16, self.sp)
   }
 
   fn ld_c_d8(&mut self, instr: u8) -> GbResult<()> {
@@ -403,8 +508,15 @@ impl Cpu {
     unimplemented!()
   }
 
+  /// ld sp d16
+  ///
+  /// Loads the sp register with the provided imm16
+  ///
+  /// Flags: - - - -
   fn ld_sp_d16(&mut self, instr: u8) -> GbResult<()> {
-    unimplemented!()
+    let d16 = self.get_imm16()?;
+    self.sp = d16;
+    Ok(())
   }
 
   fn ld_a__hli_(&mut self, instr: u8) -> GbResult<()> {

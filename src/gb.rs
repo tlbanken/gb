@@ -50,13 +50,7 @@ impl Gameboy {
   pub fn new(level_filter: LevelFilter) -> Gameboy {
     init_logging(level_filter);
 
-    let state = GbState {
-      bus: Rc::new(RefCell::new(Bus::new())),
-      eram: Rc::new(RefCell::new(Ram::new(8 * 1024))),
-      wram: Rc::new(RefCell::new(Ram::new(8 * 1024))),
-      cart: Rc::new(RefCell::new(Cartridge::new())),
-      cpu: Rc::new(RefCell::new(Cpu::new())),
-    };
+    let state = GbState::new(true);
 
     Gameboy {
       state,
@@ -106,11 +100,10 @@ impl Gameboy {
       // run as fast as possible
       control_flow.set_poll();
 
-      let mut should_redraw = self.handle_events(event, control_flow);
-      should_redraw = false;
+      self.handle_events(event, control_flow);
 
       // system step
-      // self.state.step().unwrap();
+      self.state.step().unwrap();
 
       // demo draw
       for y in 0..144 {
@@ -126,10 +119,12 @@ impl Gameboy {
       // draw the window at least every 1/60 of a second
       let now = Instant::now();
       let dtime = now - last_render;
-      if dtime.as_millis() > TARGET_FRAME_TIME_MS {
+      let should_redraw = if dtime.as_millis() > TARGET_FRAME_TIME_MS {
         last_render = now;
-        should_redraw = true;
-      }
+        true
+      } else {
+        false
+      };
 
       if should_redraw {
         self
@@ -143,7 +138,7 @@ impl Gameboy {
     // no return
   }
 
-  fn handle_events(&mut self, event: Event<UserEvent>, control_flow: &mut ControlFlow) -> bool {
+  fn handle_events(&mut self, event: Event<UserEvent>, control_flow: &mut ControlFlow) {
     match event {
       // window events
       Event::WindowEvent {
@@ -156,9 +151,8 @@ impl Gameboy {
           }
           _ => (),
         };
-        self.video.as_mut().unwrap().handle_window_event(wevent)
+        self.video.as_mut().unwrap().handle_window_event(wevent);
       }
-      Event::RedrawRequested(_) => true,
       Event::UserEvent(event) => match event {
         UserEvent::RequestResize(w, h) => {
           self
@@ -167,11 +161,13 @@ impl Gameboy {
             .unwrap()
             .window()
             .set_inner_size(PhysicalSize::new(w as f32, h as f32));
-          true
         }
-        _ => false,
+        UserEvent::EmuPause => self.state.flow.paused = true,
+        UserEvent::EmuPlay => self.state.flow.paused = false,
+        UserEvent::EmuStep => self.state.flow.step = true,
+        _ => {}
       },
-      _ => false,
+      _ => {}
     }
   }
 }

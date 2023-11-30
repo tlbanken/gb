@@ -77,8 +77,7 @@ impl Ui {
   }
 
   fn ui(&self, ctx: &Context, ui_state: &mut UiState, gb_state: &mut GbState, fps: u32) {
-    // TODO: layout the ui
-
+    // ui layout
     if ui_state.show_menu_bar {
       egui::TopBottomPanel::top(egui::Id::new("top panel")).show(ctx, |ui| {
         egui::menu::bar(ui, |ui| {
@@ -111,6 +110,28 @@ impl Ui {
           if ui.button("Load Cartridge").clicked() {
             todo!("load cartridge")
           }
+
+          // control flow buttons
+          ui.monospace("  |  ");
+          if gb_state.flow.paused && ui.button("Play").clicked() {
+            self
+              .event_loop_proxy
+              .send_event(UserEvent::EmuPlay)
+              .unwrap();
+          }
+          if gb_state.flow.paused && ui.button("Step").clicked() {
+            self
+              .event_loop_proxy
+              .send_event(UserEvent::EmuStep)
+              .unwrap();
+          }
+          if !gb_state.flow.paused && ui.button("Pause").clicked() {
+            self
+              .event_loop_proxy
+              .send_event(UserEvent::EmuPause)
+              .unwrap();
+          }
+          ui.monospace("  |  ");
 
           // fps
           ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -184,7 +205,7 @@ impl Ui {
     let mut raw_bytes = Vec::<u8>::new();
     let mut output = format!(" PC:{:04X}  ", *vpc);
     loop {
-      let byte = cpu.bus.lazy_dref().read(*vpc).unwrap();
+      let byte = cpu.bus.lazy_dref().read8(*vpc).unwrap();
       raw_bytes.push(byte);
       *vpc += 1;
       if let Some(instr) = dasm.munch(byte) {

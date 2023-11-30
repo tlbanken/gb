@@ -4,16 +4,42 @@ use std::{cell::RefCell, rc::Rc};
 
 use crate::{bus::Bus, cart::Cartridge, cpu::Cpu, err::GbResult, ram::Ram};
 
+pub struct EmuFlow {
+  pub paused: bool,
+  pub step: bool,
+}
+
+impl EmuFlow {
+  pub fn new(paused: bool) -> EmuFlow {
+    EmuFlow {
+      paused,
+      step: false,
+    }
+  }
+}
+
 pub struct GbState {
   pub bus: Rc<RefCell<Bus>>,
   pub eram: Rc<RefCell<Ram>>,
   pub wram: Rc<RefCell<Ram>>,
   pub cart: Rc<RefCell<Cartridge>>,
   pub cpu: Rc<RefCell<Cpu>>,
+  pub flow: EmuFlow,
   // TODO: maybe keep event proxy for signaling gpu draws
 }
 
 impl GbState {
+  pub fn new(paused: bool) -> GbState {
+    GbState {
+      bus: Rc::new(RefCell::new(Bus::new())),
+      eram: Rc::new(RefCell::new(Ram::new(8 * 1024))),
+      wram: Rc::new(RefCell::new(Ram::new(8 * 1024))),
+      cart: Rc::new(RefCell::new(Cartridge::new())),
+      cpu: Rc::new(RefCell::new(Cpu::new())),
+      flow: EmuFlow::new(paused),
+    }
+  }
+
   pub fn init(&mut self) -> GbResult<()> {
     // TODO: load cartridge
 
@@ -29,7 +55,13 @@ impl GbState {
   }
 
   pub fn step(&mut self) -> GbResult<()> {
+    if self.flow.paused && !self.flow.step {
+      return Ok(());
+    }
+
     self.cpu.borrow_mut().step()?;
+
+    self.flow.step = false;
     Ok(())
   }
 }
