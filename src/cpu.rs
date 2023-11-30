@@ -4,6 +4,7 @@
 #![allow(non_snake_case)]
 
 use log::error;
+use std::collections::VecDeque;
 use std::{cell::RefCell, rc::Rc};
 
 use crate::{
@@ -15,6 +16,41 @@ use crate::{
 
 type DispatchFn = fn(&mut Cpu, instr: u8) -> GbResult<()>;
 
+const HISTORY_CAP: usize = 5;
+
+pub struct InstrHistory {
+  cap: usize,
+  data: VecDeque<u16>,
+}
+
+impl InstrHistory {
+  pub fn new(cap: usize) -> InstrHistory {
+    InstrHistory {
+      data: VecDeque::new(),
+      cap,
+    }
+  }
+
+  pub fn len(&self) -> usize {
+    self.data.len()
+  }
+
+  pub fn cap(&self) -> usize {
+    self.cap
+  }
+
+  pub fn push(&mut self, entry: u16) {
+    self.data.push_front(entry);
+    if self.data.len() > self.cap {
+      self.data.pop_back();
+    }
+  }
+
+  pub fn entries(&self) -> &VecDeque<u16> {
+    &self.data
+  }
+}
+
 pub struct Cpu {
   // registers: named as HiLo (A F -> Hi Lo)
   pub af: Register,
@@ -24,6 +60,7 @@ pub struct Cpu {
   pub sp: u16,
   pub pc: u16,
   pub bus: Option<Rc<RefCell<Bus>>>,
+  pub history: InstrHistory,
 
   // instruction dispatchers
   dispatcher: Vec<DispatchFn>,
@@ -62,6 +99,7 @@ impl Cpu {
       bus: None,
       dispatcher: Self::init_dispatcher(),
       dispatcher_cb: Self::init_dispatcher_cb(),
+      history: InstrHistory::new(HISTORY_CAP),
     }
   }
 
