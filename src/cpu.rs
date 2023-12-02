@@ -1388,100 +1388,287 @@ impl Cpu {
 
   // *** ALU ***
 
+  // Helpers
+
+  /// Add 2 u8 values, affects Z, N, and H flags
+  fn add_hc(&mut self, n1: u8, n2: u8) -> u8 {
+    // remove everything other than carry flag
+    self.af.lo &= FLAG_C;
+    let res = n1.wrapping_add(n2);
+
+    // check half carry
+    self.af.lo |= if (n1 & 0xf) + (n2 & 0xf) > 0xf {
+      FLAG_H
+    } else {
+      0
+    };
+
+    // check zero
+    self.af.lo |= if res == 0 { FLAG_Z } else { 0 };
+
+    // sub flag always zero so don't set it
+
+    res
+  }
+
+  /// Sub 2 u8 values, affects Z, N, and H flags
+  fn sub_hc(&mut self, n1: u8, n2: u8) -> u8 {
+    // remove everything other than the carry flag
+    self.af.lo &= FLAG_C;
+    let res = n1.wrapping_sub(n2);
+
+    // check half carry
+    self.af.lo |= if (n2 & 0xf) > (n1 & 0xf) { FLAG_H } else { 0 };
+
+    // check zero
+    self.af.lo |= if res == 0 { FLAG_Z } else { 0 };
+
+    // this is a sub operation, so set the flag
+    self.af.lo |= FLAG_N;
+
+    res
+  }
+
+  /// INC BC
+  ///
+  /// Increment the BC register.
+  ///
+  /// Flags: - - - -
   fn inc_bc(&mut self, _instr: u8) -> GbResult<()> {
-    unimplemented!()
+    self.bc.set_u16(self.bc.hilo().wrapping_add(1));
+    Ok(())
   }
 
+  /// INC B
+  ///
+  /// Increment the B register
+  ///
+  /// Flags: Z 0 H -
   fn inc_b(&mut self, _instr: u8) -> GbResult<()> {
-    unimplemented!()
+    self.bc.hi = self.add_hc(self.bc.hi, 1);
+    Ok(())
   }
 
+  /// INC C
+  ///
+  /// Increment the C register
+  ///
+  /// Flags: Z 0 H -
   fn inc_c(&mut self, _instr: u8) -> GbResult<()> {
-    unimplemented!()
+    self.bc.lo = self.add_hc(self.bc.lo, 1);
+    Ok(())
   }
 
+  /// INC DE
+  ///
+  /// Increment the DC register
+  ///
+  /// Flags: - - - -
   fn inc_de(&mut self, _instr: u8) -> GbResult<()> {
-    unimplemented!()
+    self.de.set_u16(self.de.hilo().wrapping_add(1));
+    Ok(())
   }
 
+  /// INC D
+  ///
+  /// Increment the D register
+  ///
+  /// Flags: Z 0 H -
   fn inc_d(&mut self, _instr: u8) -> GbResult<()> {
-    unimplemented!()
+    self.de.hi = self.add_hc(self.de.hi, 1);
+    Ok(())
   }
 
+  /// INC E
+  ///
+  /// Increment the E register
+  ///
+  /// Flags: Z 0 H -
   fn inc_e(&mut self, _instr: u8) -> GbResult<()> {
-    unimplemented!()
+    self.de.lo = self.add_hc(self.de.lo, 1);
+    Ok(())
   }
 
+  /// INC HL
+  ///
+  /// Increment the HL register
+  ///
+  /// Flags: - - - -
   fn inc_hl(&mut self, _instr: u8) -> GbResult<()> {
-    unimplemented!()
+    self.hl.set_u16(self.hl.hilo().wrapping_add(1));
+    Ok(())
   }
 
+  /// INC H
+  ///
+  /// Increment the H register
+  ///
+  /// Flags: Z 0 H -
   fn inc_h(&mut self, _instr: u8) -> GbResult<()> {
-    unimplemented!()
+    self.hl.hi = self.add_hc(self.hl.hi, 1);
+    Ok(())
   }
 
+  /// INC L
+  ///
+  /// Increment the L register
+  ///
+  /// Flags: Z 0 H -
   fn inc_l(&mut self, _instr: u8) -> GbResult<()> {
-    unimplemented!()
+    self.hl.lo = self.add_hc(self.hl.lo, 1);
+    Ok(())
   }
 
+  /// INC (HL)
+  ///
+  /// Increment the value pointed by HL
+  ///
+  /// Flags: Z 0 H -
   fn inc__hl_(&mut self, _instr: u8) -> GbResult<()> {
-    unimplemented!()
+    let val = self.bus.lazy_dref().read8(self.hl.hilo())?;
+    let val = self.add_hc(val, 1);
+    self.bus.lazy_dref_mut().write8(self.hl.hilo(), val)
   }
 
+  /// INC SP
+  ///
+  /// Increment the SP register
+  ///
+  /// Flags: - - - -
   fn inc_sp(&mut self, _instr: u8) -> GbResult<()> {
-    unimplemented!()
+    self.sp = self.sp.wrapping_add(1);
+    Ok(())
   }
 
+  /// INC A
+  ///
+  /// Increment the A register
+  ///
+  /// Flags: Z 0 H -
   fn inc_a(&mut self, _instr: u8) -> GbResult<()> {
-    unimplemented!()
+    self.af.hi = self.add_hc(self.af.hi, 1);
+    Ok(())
   }
 
+  /// DEC A
+  ///
+  /// Decrements the A register
+  ///
+  /// Flags: Z 1 H -
   fn dec_a(&mut self, _instr: u8) -> GbResult<()> {
-    unimplemented!()
+    self.af.hi = self.sub_hc(self.af.hi, 1);
+    Ok(())
   }
 
+  /// DEC B
+  ///
+  /// Decrements the B register
+  ///
+  /// Flags: Z 1 H -
   fn dec_b(&mut self, _instr: u8) -> GbResult<()> {
-    unimplemented!()
+    self.bc.hi = self.sub_hc(self.bc.hi, 1);
+    Ok(())
   }
 
+  /// DEC BC
+  ///
+  /// Decrements the BC register
+  ///
+  /// Flags: - - - -
   fn dec_bc(&mut self, _instr: u8) -> GbResult<()> {
-    unimplemented!()
+    self.bc.set_u16(self.bc.hilo().wrapping_sub(1));
+    Ok(())
   }
 
+  /// DEC SP
+  ///
+  /// Decrements the SP register
+  ///
+  /// Flags: - - - -
   fn dec_sp(&mut self, _instr: u8) -> GbResult<()> {
-    unimplemented!()
+    self.sp = self.sp.wrapping_sub(1);
+    Ok(())
   }
 
+  /// DEC C
+  ///
+  /// Decrements the C register
+  ///
+  /// Flags: Z 1 H -
   fn dec_c(&mut self, _instr: u8) -> GbResult<()> {
-    unimplemented!()
+    self.bc.lo = self.sub_hc(self.bc.lo, 1);
+    Ok(())
   }
 
+  /// DEC E
+  ///
+  /// Decrements the E register
+  ///
+  /// Flags: Z 1 H -
   fn dec_e(&mut self, _instr: u8) -> GbResult<()> {
-    unimplemented!()
+    self.de.lo = self.sub_hc(self.de.lo, 1);
+    Ok(())
   }
 
+  /// DEC L
+  ///
+  /// Decrements the L register
+  ///
+  /// Flags: Z 1 H -
   fn dec_l(&mut self, _instr: u8) -> GbResult<()> {
-    unimplemented!()
+    self.hl.lo = self.sub_hc(self.hl.lo, 1);
+    Ok(())
   }
 
+  /// DEC D
+  ///
+  /// Decrements the D register
+  ///
+  /// Flags: Z 1 H -
   fn dec_d(&mut self, _instr: u8) -> GbResult<()> {
-    unimplemented!()
+    self.de.hi = self.sub_hc(self.de.hi, 1);
+    Ok(())
   }
 
+  /// DEC H
+  ///
+  /// Decrements the H register
+  ///
+  /// Flags: Z 1 H -
   fn dec_h(&mut self, _instr: u8) -> GbResult<()> {
-    unimplemented!()
+    self.hl.hi = self.sub_hc(self.hl.hi, 1);
+    Ok(())
   }
 
+  /// DEC DE
+  ///
+  /// Decrements the DE register
+  ///
+  /// Flags: - - - -
   fn dec_de(&mut self, _instr: u8) -> GbResult<()> {
-    unimplemented!()
+    self.de.set_u16(self.de.hilo().wrapping_sub(1));
+    Ok(())
   }
 
+  /// DEC HL
+  ///
+  /// Decrements the HL register
+  ///
+  /// Flags: - - - -
   fn dec_hl(&mut self, _instr: u8) -> GbResult<()> {
-    unimplemented!()
+    self.hl.set_u16(self.hl.hilo().wrapping_sub(1));
+    Ok(())
   }
 
+  /// DEC (HL)
+  ///
+  /// Decrements the value pointed to by HL
+  ///
+  /// Flags: Z 1 H -
   fn dec__hl_(&mut self, _instr: u8) -> GbResult<()> {
-    unimplemented!()
+    let val = self.bus.lazy_dref().read8(self.hl.hilo())?;
+    let val = self.sub_hc(val, 1);
+    self.bus.lazy_dref_mut().write8(self.hl.hilo(), val)
   }
 
   fn add_hl_bc(&mut self, _instr: u8) -> GbResult<()> {
