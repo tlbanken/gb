@@ -22,11 +22,11 @@ type DispatchFn = fn(&mut Cpu, instr: u8) -> GbResult<()>;
 
 // flags const
 /// Zero flag. Set if result of an operation is zero.
-const FLAG_Z: u8 = (1 << 7);
+pub const FLAG_Z: u8 = (1 << 7);
 /// Subtraction Flag. Indicates if the previous instruction was a subtraction.
-const FLAG_N: u8 = (1 << 6);
+pub const FLAG_N: u8 = (1 << 6);
 /// Half-Carry Flag. Indicates carry for the lower 4 bits of the result.
-const FLAG_H: u8 = (1 << 5);
+pub const FLAG_H: u8 = (1 << 5);
 /// Carry Flag. Set on the following:
 ///
 /// * When the result of an 8-bit addition is higher than $FF.
@@ -34,7 +34,7 @@ const FLAG_H: u8 = (1 << 5);
 /// * When the result of a subtraction or comparison is lower than zero (like in
 ///   Z80 and x86 CPUs, but unlike in 65XX and ARM CPUs).
 /// * When a rotate/shift operation shifts out a “1” bit.
-const FLAG_C: u8 = (1 << 4);
+pub const FLAG_C: u8 = (1 << 4);
 
 const HISTORY_CAP: usize = 5;
 
@@ -60,9 +60,9 @@ impl InstrHistory {
   }
 
   pub fn push(&mut self, entry: u16) {
-    self.data.push_front(entry);
+    self.data.push_back(entry);
     if self.data.len() > self.cap {
-      self.data.pop_back();
+      self.data.pop_front();
     }
   }
 
@@ -1361,7 +1361,7 @@ impl Cpu {
 
     // update state
     self.af.lo |= carry | hcarry;
-    self.sp = self.sp.wrapping_add_signed(r8);
+    self.hl.set_u16(self.sp.wrapping_add_signed(r8));
     Ok(())
   }
 
@@ -1411,6 +1411,86 @@ impl Cpu {
     res
   }
 
+  /// Add 2 u16 values, affects N, H, C flags
+  fn add16(&mut self, n1: u16, n2: u16) -> u16 {
+    // reset all but Z flag
+    self.af.lo &= FLAG_Z;
+
+    // check half carry
+    self.af.lo |= if (n1 & 0x0fff) + (n2 & 0x0fff) > 0x0fff {
+      FLAG_H
+    } else {
+      0
+    };
+
+    // check full carry
+    self.af.lo |= if (n1 as u32) + (n2 as u32) > 0xffff_u32 {
+      FLAG_C
+    } else {
+      0
+    };
+
+    // not sub so leave that as 0
+
+    n1.wrapping_add(n2)
+  }
+
+  fn add8(&mut self, n1: u8, n2: u8) -> u8 {
+    // reset flags
+    self.af.lo = 0;
+    let res = n1.wrapping_add(n2);
+
+    // check half carry
+    self.af.lo |= if (n1 & 0x0f) + (n2 & 0x0f) > 0x0f {
+      FLAG_H
+    } else {
+      0
+    };
+
+    // check full carry
+    self.af.lo |= if (n1 as u16) + (n2 as u16) > 0xff_u16 {
+      FLAG_C
+    } else {
+      0
+    };
+
+    // check zero flag
+    self.af.lo |= if res == 0 { FLAG_Z } else { 0 };
+
+    // not sub so leave that as 0
+
+    res
+  }
+
+  fn adc8(&mut self, n1: u8, n2: u8) -> u8 {
+    let carry = if self.af.lo & FLAG_C > 0 { 1 } else { 0 };
+
+    // reset flags
+    self.af.lo = 0;
+    let res = n1.wrapping_add(n2).wrapping_add(carry);
+
+    // check half carry
+    self.af.lo |= if (n1 & 0x0f) + (n2 & 0x0f) + carry > 0x0f {
+      FLAG_H
+    } else {
+      0
+    };
+
+    // check full carry
+    self.af.lo |= if (n1 as u16) + (n2 as u16) + carry as u16 > 0xff_u16 {
+      FLAG_C
+    } else {
+      0
+    };
+
+    // check zero flag
+    self.af.lo |= if res == 0 { FLAG_Z } else { 0 };
+
+    // not sub so leave that as 0
+
+    res
+  }
+
   /// Sub 2 u8 values, affects Z, N, and H flags
   fn sub_hc(&mut self, n1: u8, n2: u8) -> u8 {
     // remove everything other than the carry flag
@@ -1427,6 +1507,105 @@ impl Cpu {
     self.af.lo |= FLAG_N;
 
     res
+  }
+
+  /// Subs r from self.a and sets appropriate flags.
+  fn sub_r(&mut self, r: u8) {
+    // reset flags
+    self.af.lo = 0;
+    let a = self.af.hi;
+    let res = a.wrapping_sub(r);
+
+    // check half carry
+    self.af.lo |= if (r & 0xf) > (a & 0xf) { FLAG_H } else { 0 };
+
+    // check carry
+    self.af.lo |= if r > a { FLAG_C } else { 0 };
+
+    // check zero
+    self.af.lo |= if res == 0 { FLAG_Z } else { 0 };
+
+    // this is a sub operation, so set the flag
+    self.af.lo |= FLAG_N;
+
+    self.af.hi = res;
+  }
+
+  /// Subs r from self.a and sets appropriate flags.
+  fn sbc_r(&mut self, r: u8) {
+    let carry = if self.af.lo & FLAG_C > 0 { 1 } else { 0 };
+
+    // reset flags
+    self.af.lo = 0;
+    let a = self.af.hi;
+    let res = a.wrapping_sub(r).wrapping_sub(carry);
+
+    // check half carry
+    self.af.lo |= if ((r & 0xf) + 1) > (a & 0xf) {
+      FLAG_H
+    } else {
+      0
+    };
+
+    // check carry
+    self.af.lo |= if (r as u16 + 1) > (a as u16) {
+      FLAG_C
+    } else {
+      0
+    };
+
+    // check zero
+    self.af.lo |= if res == 0 { FLAG_Z } else { 0 };
+
+    // this is a sub operation, so set the flag
+    self.af.lo |= FLAG_N;
+
+    self.af.hi = res;
+  }
+
+  fn and_r(&mut self, r: u8) {
+    // start with only H flags set.
+    self.af.lo = FLAG_H;
+    self.af.hi &= r;
+    // check zero flag
+    self.af.lo |= if self.af.hi == 0 { FLAG_Z } else { 0 };
+  }
+
+  fn xor_r(&mut self, r: u8) {
+    // reset flags
+    self.af.lo = 0;
+    self.af.hi ^= r;
+    // check zero flag
+    self.af.lo |= if self.af.hi == 0 { FLAG_Z } else { 0 };
+  }
+
+  fn or_r(&mut self, r: u8) {
+    // reset flags
+    self.af.lo = 0;
+    self.af.hi |= r;
+    // check zero flag
+    self.af.lo |= if self.af.hi == 0 { FLAG_Z } else { 0 };
+  }
+
+  fn cp_r(&mut self, r: u8) {
+    // reset flags
+    self.af.lo = 0;
+
+    // half carry
+    self.af.lo |= if (r & 0x0f) > (self.af.hi & 0x0f) {
+      FLAG_H
+    } else {
+      0
+    };
+
+    // carry
+    self.af.lo |= if r > self.af.hi { FLAG_C } else { 0 };
+
+    // zero
+    self.af.lo |= if r == self.af.hi { FLAG_Z } else { 0 };
+
+    // sub
+    self.af.lo |= FLAG_N;
   }
 
   /// INC BC
@@ -1671,508 +1850,1393 @@ impl Cpu {
     self.bus.lazy_dref_mut().write8(self.hl.hilo(), val)
   }
 
+  /// ADD HL BC
+  ///
+  /// Add BC to HL and store into HL
+  ///
+  /// Flags: - 0 H C
   fn add_hl_bc(&mut self, _instr: u8) -> GbResult<()> {
-    unimplemented!()
+    let res = self.add16(self.hl.hilo(), self.bc.hilo());
+    self.hl.set_u16(res);
+    Ok(())
   }
 
+  /// ADD HL HL
+  ///
+  /// Add HL to HL and store into HL
+  ///
+  /// Flags: - 0 H C
   fn add_hl_hl(&mut self, _instr: u8) -> GbResult<()> {
-    unimplemented!()
+    let res = self.add16(self.hl.hilo(), self.hl.hilo());
+    self.hl.set_u16(res);
+    Ok(())
   }
 
+  /// ADD HL DE
+  ///
+  /// Add DE to HL and store into HL
+  ///
+  /// Flags: - 0 H C
   fn add_hl_de(&mut self, _instr: u8) -> GbResult<()> {
-    unimplemented!()
+    let res = self.add16(self.hl.hilo(), self.de.hilo());
+    self.hl.set_u16(res);
+    Ok(())
   }
 
+  /// ADD HL SP
+  ///
+  /// Add SP to HL and store into HL
+  ///
+  /// Flags: - 0 H C
   fn add_hl_sp(&mut self, _instr: u8) -> GbResult<()> {
-    unimplemented!()
+    let res = self.add16(self.hl.hilo(), self.sp);
+    self.hl.set_u16(res);
+    Ok(())
   }
 
+  /// ADD A B
+  ///
+  /// Add B to A and store into A
+  ///
+  /// Flags: Z 0 H C
   fn add_a_b(&mut self, _instr: u8) -> GbResult<()> {
-    unimplemented!()
+    self.af.hi = self.add8(self.af.hi, self.bc.hi);
+    Ok(())
   }
 
+  /// ADD A C
+  ///
+  /// Add C to A and store into A
+  ///
+  /// Flags: Z 0 H C
   fn add_a_c(&mut self, _instr: u8) -> GbResult<()> {
-    unimplemented!()
+    self.af.hi = self.add8(self.af.hi, self.bc.lo);
+    Ok(())
   }
 
+  /// ADD A D
+  ///
+  /// Add D to A and store into A
+  ///
+  /// Flags: Z 0 H C
   fn add_a_d(&mut self, _instr: u8) -> GbResult<()> {
-    unimplemented!()
+    self.af.hi = self.add8(self.af.hi, self.de.hi);
+    Ok(())
   }
 
+  /// ADD A E
+  ///
+  /// Add E to A and store into A
+  ///
+  /// Flags: Z 0 H C
   fn add_a_e(&mut self, _instr: u8) -> GbResult<()> {
-    unimplemented!()
+    self.af.hi = self.add8(self.af.hi, self.de.lo);
+    Ok(())
   }
 
+  /// ADD A H
+  ///
+  /// Add H to A and store into A
+  ///
+  /// Flags: Z 0 H C
   fn add_a_h(&mut self, _instr: u8) -> GbResult<()> {
-    unimplemented!()
+    self.af.hi = self.add8(self.af.hi, self.hl.hi);
+    Ok(())
   }
 
+  /// ADD A L
+  ///
+  /// Add L to A and store into A
+  ///
+  /// Flags: Z 0 H C
   fn add_a_l(&mut self, _instr: u8) -> GbResult<()> {
-    unimplemented!()
+    self.af.hi = self.add8(self.af.hi, self.hl.lo);
+    Ok(())
   }
 
+  /// ADD A (HL)
+  ///
+  /// Add value pointed by HL to A and store into A
+  ///
+  /// Flags: Z 0 H C
   fn add_a__hl_(&mut self, _instr: u8) -> GbResult<()> {
-    unimplemented!()
+    let val = self.bus.lazy_dref().read8(self.hl.hilo())?;
+    self.af.hi = self.add8(self.af.hi, val);
+    Ok(())
   }
 
+  /// ADD A A
+  ///
+  /// Add A to A and store into A
+  ///
+  /// Flags: Z 0 H C
   fn add_a_a(&mut self, _instr: u8) -> GbResult<()> {
-    unimplemented!()
+    self.af.hi = self.add8(self.af.hi, self.af.hi);
+    Ok(())
   }
 
+  /// ADD A d8
+  ///
+  /// Add imm8 with A and store into A
+  ///
+  /// Flags: Z 0 H C
   fn add_a_d8(&mut self, _instr: u8) -> GbResult<()> {
-    unimplemented!()
+    let d8 = self.get_imm8()?;
+    self.af.hi = self.add8(self.af.hi, d8);
+    Ok(())
   }
 
+  /// ADD SP r8
+  ///
+  /// Add imm8 to SP and store into SP
+  ///
+  /// Flags: 0 0 H C
   fn add_sp_r8(&mut self, _instr: u8) -> GbResult<()> {
-    unimplemented!()
+    // reset flags
+    self.af.lo = 0;
+
+    // read r8 with sign extension
+    let r8 = self.get_imm8()? as i8 as i16;
+    let hcarry = if (self.sp & 0xf) as u8 + (r8 & 0xf) as u8 > 0xf {
+      FLAG_H
+    } else {
+      0
+    };
+    let carry = if (self.sp & 0xff) + (r8 & 0xff) as u16 > 0xff {
+      FLAG_C
+    } else {
+      0
+    };
+
+    // update state
+    self.af.lo |= carry | hcarry;
+    self.sp = self.sp.wrapping_add_signed(r8);
+    Ok(())
   }
 
+  /// ADC A B
+  ///
+  /// Add B to A with Carry and store into A
+  ///
+  /// Flags: Z 0 H C
   fn adc_a_b(&mut self, _instr: u8) -> GbResult<()> {
-    unimplemented!()
+    self.af.hi = self.adc8(self.af.hi, self.bc.hi);
+    Ok(())
   }
 
+  /// ADC A C
+  ///
+  /// Add C to A with carry and store into A
+  ///
+  /// Flags: Z 0 H C
   fn adc_a_c(&mut self, _instr: u8) -> GbResult<()> {
-    unimplemented!()
+    self.af.hi = self.adc8(self.af.hi, self.bc.lo);
+    Ok(())
   }
 
+  /// ADC A D
+  ///
+  /// Add D to A with Carry and store into A
+  ///
+  /// Flags: Z 0 H C
   fn adc_a_d(&mut self, _instr: u8) -> GbResult<()> {
-    unimplemented!()
+    self.af.hi = self.adc8(self.af.hi, self.de.hi);
+    Ok(())
   }
 
+  /// ADC A E
+  ///
+  /// Add E to A with carry and store into A
+  ///
+  /// Flags: Z 0 H C
   fn adc_a_e(&mut self, _instr: u8) -> GbResult<()> {
-    unimplemented!()
+    self.af.hi = self.adc8(self.af.hi, self.de.lo);
+    Ok(())
   }
 
+  /// ADC A H
+  ///
+  /// Add A to H with carry and store into A
+  ///
+  /// Flags: Z 0 H C
   fn adc_a_h(&mut self, _instr: u8) -> GbResult<()> {
-    unimplemented!()
+    self.af.hi = self.adc8(self.af.hi, self.hl.hi);
+    Ok(())
   }
 
+  /// ADC A L
+  ///
+  /// Add L to A with carry and store into A
+  ///
+  /// Flags: Z 0 H C
   fn adc_a_l(&mut self, _instr: u8) -> GbResult<()> {
-    unimplemented!()
+    self.af.hi = self.adc8(self.af.hi, self.hl.lo);
+    Ok(())
   }
 
+  /// ADC A (HL)
+  ///
+  /// Add value pointed by HL to A and store into A
+  ///
+  /// Flags: Z 0 H C
   fn adc_a__hl_(&mut self, _instr: u8) -> GbResult<()> {
-    unimplemented!()
+    let val = self.bus.lazy_dref().read8(self.hl.hilo())?;
+    self.af.hi = self.adc8(self.af.hi, val);
+    Ok(())
   }
 
+  /// ADC A A
+  ///
+  /// Add A to A with carry and store into A
+  ///
+  /// Flags: Z 0 H C
   fn adc_a_a(&mut self, _instr: u8) -> GbResult<()> {
-    unimplemented!()
+    self.af.hi = self.adc8(self.af.hi, self.af.hi);
+    Ok(())
   }
 
+  /// ADC A d8
+  ///
+  /// Add imm8 to A and store into A
+  ///
+  /// Flags: Z 0 H C
   fn adc_a_d8(&mut self, _instr: u8) -> GbResult<()> {
-    unimplemented!()
+    let d8 = self.get_imm8()?;
+    self.af.hi = self.adc8(self.af.hi, d8);
+    Ok(())
   }
 
+  /// SUB B
+  ///
+  /// Sub B from A and store into A
+  ///
+  /// Flags: Z 1 H C
   fn sub_b(&mut self, _instr: u8) -> GbResult<()> {
-    unimplemented!()
+    self.sub_r(self.bc.hi);
+    Ok(())
   }
 
+  /// SUB C
+  ///
+  /// Sub C from A and store into A
+  ///
+  /// Flags: Z 1 H C
   fn sub_c(&mut self, _instr: u8) -> GbResult<()> {
-    unimplemented!()
+    self.sub_r(self.bc.lo);
+    Ok(())
   }
 
+  /// SUB D
+  ///
+  /// Sub D from A and store into A
+  ///
+  /// Flags: Z 1 H C
   fn sub_d(&mut self, _instr: u8) -> GbResult<()> {
-    unimplemented!()
+    self.sub_r(self.de.hi);
+    Ok(())
   }
 
+  /// SUB E
+  ///
+  /// Sub E from A and store into A
+  ///
+  /// Flags: Z 1 H C
   fn sub_e(&mut self, _instr: u8) -> GbResult<()> {
-    unimplemented!()
+    self.sub_r(self.de.lo);
+    Ok(())
   }
 
+  /// SUB H
+  ///
+  /// Sub H from A and store into A
+  ///
+  /// Flags: Z 1 H C
   fn sub_h(&mut self, _instr: u8) -> GbResult<()> {
-    unimplemented!()
+    self.sub_r(self.hl.hi);
+    Ok(())
   }
 
+  /// SUB L
+  ///
+  /// Sub L from A and store into A
+  ///
+  /// Flags: Z 1 H C
   fn sub_l(&mut self, _instr: u8) -> GbResult<()> {
-    unimplemented!()
+    self.sub_r(self.hl.lo);
+    Ok(())
   }
 
+  /// SUB (HL)
+  ///
+  /// Sub val pointed to by HL and store into A
+  ///
+  /// Flags: Z 1 H C
   fn sub__hl_(&mut self, _instr: u8) -> GbResult<()> {
-    unimplemented!()
+    let val = self.bus.lazy_dref().read8(self.hl.hilo())?;
+    self.sub_r(val);
+    Ok(())
   }
 
+  /// SUB A
+  ///
+  /// Sub A from A and store into A
+  ///
+  /// Flags: Z 1 H C
   fn sub_a(&mut self, _instr: u8) -> GbResult<()> {
-    unimplemented!()
+    self.sub_r(self.af.hi);
+    Ok(())
   }
 
+  /// SUB d8
+  ///
+  /// Sub imm8 from A and store into A
+  ///
+  /// Flags: Z 1 H C
   fn sub_d8(&mut self, _instr: u8) -> GbResult<()> {
-    unimplemented!()
+    let d8 = self.get_imm8()?;
+    self.sub_r(d8);
+    Ok(())
   }
 
+  /// SBC A B
+  ///
+  /// Sub B from A with carry and store into A
+  ///
+  /// Flags: Z 1 H C
   fn sbc_a_b(&mut self, _instr: u8) -> GbResult<()> {
-    unimplemented!()
+    self.sbc_r(self.bc.hi);
+    Ok(())
   }
 
+  /// SBC A C
+  ///
+  /// Sub C from A with carry and store into A
+  ///
+  /// Flags: Z 1 H C
   fn sbc_a_c(&mut self, _instr: u8) -> GbResult<()> {
-    unimplemented!()
+    self.sbc_r(self.bc.lo);
+    Ok(())
   }
 
+  /// SBC A D
+  ///
+  /// Sub D from A with carry and store into A
+  ///
+  /// Flags: Z 1 H C
   fn sbc_a_d(&mut self, _instr: u8) -> GbResult<()> {
-    unimplemented!()
+    self.sbc_r(self.de.hi);
+    Ok(())
   }
 
+  /// SBC A E
+  ///
+  /// Sub E from A with carry and store into A
+  ///
+  /// Flags: Z 1 H C
   fn sbc_a_e(&mut self, _instr: u8) -> GbResult<()> {
-    unimplemented!()
+    self.sbc_r(self.de.lo);
+    Ok(())
   }
 
+  /// SBC A H
+  ///
+  /// Sub H from A with carry and store into A
+  ///
+  /// Flags: Z 1 H C
   fn sbc_a_h(&mut self, _instr: u8) -> GbResult<()> {
-    unimplemented!()
+    self.sbc_r(self.hl.hi);
+    Ok(())
   }
 
+  /// SBC A L
+  ///
+  /// Sub L from A with carry and store into A
+  ///
+  /// Flags: Z 1 H C
   fn sbc_a_l(&mut self, _instr: u8) -> GbResult<()> {
-    unimplemented!()
+    self.sbc_r(self.hl.lo);
+    Ok(())
   }
 
+  /// SBC A (HL)
+  ///
+  /// Sub val pointed by HL with carry and store into A
+  ///
+  /// Flags: Z 1 H C
   fn sbc_a__hl_(&mut self, _instr: u8) -> GbResult<()> {
-    unimplemented!()
+    let val = self.bus.lazy_dref().read8(self.hl.hilo())?;
+    self.sbc_r(val);
+    Ok(())
   }
 
+  /// SBC A A
+  ///
+  /// Sub A from A with carry and store into A
+  ///
+  /// Flags: Z 1 H C
   fn sbc_a_a(&mut self, _instr: u8) -> GbResult<()> {
-    unimplemented!()
+    self.sbc_r(self.af.hi);
+    Ok(())
   }
 
+  /// SBC A d8
+  ///
+  /// Sub imm8 from A and store into A
+  ///
+  /// Flags: Z 1 H C
   fn sbc_a_d8(&mut self, _instr: u8) -> GbResult<()> {
-    unimplemented!()
+    let d8 = self.get_imm8()?;
+    self.sbc_r(d8);
+    Ok(())
   }
 
+  /// AND B
+  ///
+  /// AND B with A and store into A
+  ///
+  /// Flags: Z 0 1 0
   fn and_b(&mut self, _instr: u8) -> GbResult<()> {
-    unimplemented!()
+    self.and_r(self.bc.hi);
+    Ok(())
   }
 
+  /// AND C
+  ///
+  /// AND C with A and store into A
+  ///
+  /// Flags: Z 0 1 0
   fn and_c(&mut self, _instr: u8) -> GbResult<()> {
-    unimplemented!()
+    self.and_r(self.bc.lo);
+    Ok(())
   }
 
+  /// AND D
+  ///
+  /// AND D with A and store into A
+  ///
+  /// Flags: Z 0 1 0
   fn and_d(&mut self, _instr: u8) -> GbResult<()> {
-    unimplemented!()
+    self.and_r(self.de.hi);
+    Ok(())
   }
 
+  /// AND E
+  ///
+  /// AND E with A and store into A
+  ///
+  /// Flags: Z 0 1 0
   fn and_e(&mut self, _instr: u8) -> GbResult<()> {
-    unimplemented!()
+    self.and_r(self.de.lo);
+    Ok(())
   }
 
+  /// AND H
+  ///
+  /// AND H with A and store into A
+  ///
+  /// Flags: Z 0 1 0
   fn and_h(&mut self, _instr: u8) -> GbResult<()> {
-    unimplemented!()
+    self.and_r(self.hl.hi);
+    Ok(())
   }
 
+  /// AND L
+  ///
+  /// AND L with A and store into A
+  ///
+  /// Flags: Z 0 1 0
   fn and_l(&mut self, _instr: u8) -> GbResult<()> {
-    unimplemented!()
+    self.and_r(self.hl.lo);
+    Ok(())
   }
 
+  /// AND (HL)
+  ///
+  /// AND val pointed by HL with A and store into A
+  ///
+  /// Flags: Z 0 1 0
   fn and__hl_(&mut self, _instr: u8) -> GbResult<()> {
-    unimplemented!()
+    let val = self.bus.lazy_dref().read8(self.hl.hilo())?;
+    self.and_r(val);
+    Ok(())
   }
 
+  /// AND A
+  ///
+  /// AND A with A and store into A
+  ///
+  /// Flags: Z 0 1 0
   fn and_a(&mut self, _instr: u8) -> GbResult<()> {
-    unimplemented!()
+    self.and_r(self.af.hi);
+    Ok(())
   }
 
+  /// AND d8
+  ///
+  /// AND imm8 with A and store into A
+  ///
+  /// Flags: Z 0 1 0
   fn and_d8(&mut self, _instr: u8) -> GbResult<()> {
-    unimplemented!()
+    let d8 = self.get_imm8()?;
+    self.and_r(d8);
+    Ok(())
   }
 
+  /// XOR B
+  ///
+  /// XOR B with A and store into A
+  ///
+  /// Flags: Z 0 0 0
   fn xor_b(&mut self, _instr: u8) -> GbResult<()> {
-    unimplemented!()
+    self.xor_r(self.bc.hi);
+    Ok(())
   }
 
+  /// XOR C
+  ///
+  /// XOR C with A and store into A
+  ///
+  /// Flags: Z 0 0 0
   fn xor_c(&mut self, _instr: u8) -> GbResult<()> {
-    unimplemented!()
+    self.xor_r(self.bc.lo);
+    Ok(())
   }
 
+  /// XOR D
+  ///
+  /// XOR D with A and store into A
+  ///
+  /// Flags: Z 0 0 0
   fn xor_d(&mut self, _instr: u8) -> GbResult<()> {
-    unimplemented!()
+    self.xor_r(self.de.hi);
+    Ok(())
   }
 
+  /// XOR E
+  ///
+  /// XOR E with A and store into A
+  ///
+  /// Flags: Z 0 0 0
   fn xor_e(&mut self, _instr: u8) -> GbResult<()> {
-    unimplemented!()
+    self.xor_r(self.de.lo);
+    Ok(())
   }
 
+  /// XOR H
+  ///
+  /// XOR H with A and store into A
+  ///
+  /// Flags: Z 0 0 0
   fn xor_h(&mut self, _instr: u8) -> GbResult<()> {
-    unimplemented!()
+    self.xor_r(self.hl.hi);
+    Ok(())
   }
 
+  /// XOR L
+  ///
+  /// XOR L with A and store into A
+  ///
+  /// Flags: Z 0 0 0
   fn xor_l(&mut self, _instr: u8) -> GbResult<()> {
-    unimplemented!()
+    self.xor_r(self.hl.lo);
+    Ok(())
   }
 
+  /// XOR (HL)
+  ///
+  /// XOR val pointed by HL with A and store into A
+  ///
+  /// Flags: Z 0 0 0
   fn xor__hl_(&mut self, _instr: u8) -> GbResult<()> {
-    unimplemented!()
+    let val = self.bus.lazy_dref().read8(self.hl.hilo())?;
+    self.xor_r(val);
+    Ok(())
   }
 
+  /// XOR A
+  ///
+  /// XOR A with A and store into A
+  ///
+  /// Flags Z 0 0 0
   fn xor_a(&mut self, _instr: u8) -> GbResult<()> {
-    unimplemented!()
+    self.xor_r(self.af.hi);
+    Ok(())
   }
 
+  /// XOR d8
+  ///
+  /// XOR imm8 with A and store into A
+  ///
+  /// Flags: Z 0 0 0
   fn xor_d8(&mut self, _instr: u8) -> GbResult<()> {
-    unimplemented!()
+    let d8 = self.get_imm8()?;
+    self.xor_r(d8);
+    Ok(())
   }
 
+  /// OR B
+  ///
+  /// OR B with A and store into A
+  ///
+  /// Flags: Z 0 0 0
   fn or_b(&mut self, _instr: u8) -> GbResult<()> {
-    unimplemented!()
+    self.or_r(self.bc.hi);
+    Ok(())
   }
 
+  /// OR C
+  ///
+  /// OR C with A and store into A
+  ///
+  /// Flags: Z 0 0 0
   fn or_c(&mut self, _instr: u8) -> GbResult<()> {
-    unimplemented!()
+    self.or_r(self.bc.lo);
+    Ok(())
   }
 
+  /// OR D
+  ///
+  /// OR D with A and store into A
+  ///
+  /// Flags: Z 0 0 0
   fn or_d(&mut self, _instr: u8) -> GbResult<()> {
-    unimplemented!()
+    self.or_r(self.de.hi);
+    Ok(())
   }
 
+  /// OR E
+  ///
+  /// OR E with A and store into A
+  ///
+  /// Flags: Z 0 0 0
   fn or_e(&mut self, _instr: u8) -> GbResult<()> {
-    unimplemented!()
+    self.or_r(self.de.lo);
+    Ok(())
   }
 
+  /// OR H
+  ///
+  /// OR H with A and store into A
+  ///
+  /// Flags: Z 0 0 0
   fn or_h(&mut self, _instr: u8) -> GbResult<()> {
-    unimplemented!()
+    self.or_r(self.hl.hi);
+    Ok(())
   }
 
+  /// OR L
+  ///
+  /// OR L with A and store into A
+  ///
+  /// Flags: Z 0 0 0
   fn or_l(&mut self, _instr: u8) -> GbResult<()> {
-    unimplemented!()
+    self.or_r(self.hl.lo);
+    Ok(())
   }
 
+  /// OR (HL)
+  ///
+  /// OR val pointed by HL with A and store into A
+  ///
+  /// Flags: Z 0 0 0
   fn or__hl_(&mut self, _instr: u8) -> GbResult<()> {
-    unimplemented!()
+    let val = self.bus.lazy_dref().read8(self.hl.hilo())?;
+    self.or_r(val);
+    Ok(())
   }
 
+  /// OR A
+  ///
+  /// OR A with A and store into A
+  ///
+  /// Flags: Z 0 0 0
   fn or_a(&mut self, _instr: u8) -> GbResult<()> {
-    unimplemented!()
+    self.or_r(self.af.hi);
+    Ok(())
   }
 
+  /// OR d8
+  ///
+  /// OR imm8 with A and store into A
+  ///
+  /// Flags: Z 0 0 0
   fn or_d8(&mut self, _instr: u8) -> GbResult<()> {
-    unimplemented!()
+    let d8 = self.get_imm8()?;
+    self.or_r(d8);
+    Ok(())
   }
 
+  /// CP B
+  ///
+  /// Compare B with A
+  ///
+  /// Flags: Z 1 H C
   fn cp_b(&mut self, _instr: u8) -> GbResult<()> {
-    unimplemented!()
+    self.cp_r(self.bc.hi);
+    Ok(())
   }
 
+  /// CP C
+  ///
+  /// Compare C with A
+  ///
+  /// Flags: Z 1 H C
   fn cp_c(&mut self, _instr: u8) -> GbResult<()> {
-    unimplemented!()
+    self.cp_r(self.bc.lo);
+    Ok(())
   }
 
+  /// CP D
+  ///
+  /// Compare D with A
+  ///
+  /// Flags: Z 1 H C
   fn cp_d(&mut self, _instr: u8) -> GbResult<()> {
-    unimplemented!()
+    self.cp_r(self.de.hi);
+    Ok(())
   }
 
+  /// CP E
+  ///
+  /// Compare E with A
+  ///
+  /// Flags: Z 1 H C
   fn cp_e(&mut self, _instr: u8) -> GbResult<()> {
-    unimplemented!()
+    self.cp_r(self.de.lo);
+    Ok(())
   }
 
+  /// CP H
+  ///
+  /// Compare H with A
+  ///
+  /// Flags: Z 1 H C
   fn cp_h(&mut self, _instr: u8) -> GbResult<()> {
-    unimplemented!()
+    self.cp_r(self.hl.hi);
+    Ok(())
   }
 
+  /// CP L
+  ///
+  /// Compare L with A
+  ///
+  /// Flags: Z 1 H C
   fn cp_l(&mut self, _instr: u8) -> GbResult<()> {
-    unimplemented!()
+    self.cp_r(self.hl.lo);
+    Ok(())
   }
 
+  /// CP (HL)
+  ///
+  /// Compare val pointed by HL with A
+  ///
+  /// Flags: Z 1 H C
   fn cp__hl_(&mut self, _instr: u8) -> GbResult<()> {
-    unimplemented!()
+    let val = self.bus.lazy_dref().read8(self.hl.hilo())?;
+    self.cp_r(val);
+    Ok(())
   }
 
+  /// CP A
+  ///
+  /// Compare A with A
+  ///
+  /// Flags: Z 1 H C
   fn cp_a(&mut self, _instr: u8) -> GbResult<()> {
-    unimplemented!()
+    self.cp_r(self.af.hi);
+    Ok(())
   }
 
+  /// CP d8
+  ///
+  /// Compare imm8 with A
+  ///
+  /// Flags: Z 1 H C
   fn cp_d8(&mut self, _instr: u8) -> GbResult<()> {
-    unimplemented!()
+    let d8 = self.get_imm8()?;
+    self.cp_r(d8);
+    Ok(())
   }
 
+  /// RLCA
+  ///
+  /// Rotate A register Left
+  ///
+  /// Flags: 0 0 0 C
   fn rlca(&mut self, _instr: u8) -> GbResult<()> {
-    unimplemented!()
+    // reset flags
+    self.af.lo = 0;
+    let bit7 = self.af.hi & 0x80;
+    let carry = if bit7 > 0 { FLAG_C } else { 0 };
+
+    self.af.hi <<= 1;
+    self.af.hi |= bit7 >> 7;
+
+    // set carry flag
+    self.af.lo |= carry;
+
+    Ok(())
   }
 
+  /// RRCA
+  ///
+  /// Rotate A register right
+  ///
+  /// Flags: 0 0 0 C
   fn rrca(&mut self, _instr: u8) -> GbResult<()> {
-    unimplemented!()
+    // reset flags
+    self.af.lo = 0;
+    let bit0 = self.af.hi & 0x01;
+    let carry = if bit0 > 0 { FLAG_C } else { 0 };
+
+    self.af.hi >>= 1;
+    self.af.hi |= bit0 << 7;
+
+    // set carry flag
+    self.af.lo |= carry;
+
+    Ok(())
   }
 
+  /// RLA
+  ///
+  /// Rotate A register left through carry
+  ///
+  /// Flags: 0 0 0 C
   fn rla(&mut self, _instr: u8) -> GbResult<()> {
-    unimplemented!()
+    let bit_carry = (self.af.lo & FLAG_C > 0) as u8;
+    // reset flags
+    self.af.lo = 0;
+    let bit7 = self.af.hi & 0x80;
+    let carry = if bit7 > 0 { FLAG_C } else { 0 };
+
+    self.af.hi <<= 1;
+    self.af.hi |= bit_carry;
+
+    // set carry flag
+    self.af.lo |= carry;
+
+    Ok(())
   }
 
+  /// RRA
+  ///
+  /// Rotate A register right through carry
+  ///
+  /// Flags: 0 0 0 C
   fn rra(&mut self, _instr: u8) -> GbResult<()> {
-    unimplemented!()
+    let bit_carry = (self.af.lo & FLAG_C > 0) as u8;
+    // reset flags
+    self.af.lo = 0;
+    let bit0 = self.af.hi & 0x01;
+    let carry = if bit0 > 0 { FLAG_C } else { 0 };
+
+    self.af.hi >>= 1;
+    self.af.hi |= bit_carry << 7;
+
+    // set carry flag
+    self.af.lo |= carry;
+
+    Ok(())
   }
 
+  /// DAA
+  ///
+  /// Decimal adjust A
+  ///
+  /// Flags: Z - 0 C
   fn daa(&mut self, _instr: u8) -> GbResult<()> {
-    unimplemented!()
+    todo!("what is DAA?")
   }
 
+  /// CPL
+  ///
+  /// Compliment of A
+  ///
+  /// Flags: 0 1 1 0
   fn cpl(&mut self, _instr: u8) -> GbResult<()> {
-    unimplemented!()
+    self.af.lo = (FLAG_N | FLAG_H);
+    self.af.hi ^= 0xff;
+    Ok(())
   }
 
+  /// SCF
+  ///
+  /// Set carry flag
+  ///
+  /// Flags: - 0 0 1
   fn scf(&mut self, _instr: u8) -> GbResult<()> {
-    unimplemented!()
+    // only keep Z flag
+    self.af.lo &= FLAG_Z;
+    self.af.lo |= FLAG_C;
+    Ok(())
   }
 
+  /// CCF
+  ///
+  /// Toggle carry flag
+  ///
+  /// Flags: - 0 0 C
   fn ccf(&mut self, _instr: u8) -> GbResult<()> {
-    unimplemented!()
+    // only keep Z flags
+    self.af.lo &= FLAG_Z;
+    self.af.lo ^= FLAG_C;
+    Ok(())
   }
 
   // *** Branch/Jumps ***
 
+  fn jr_flag_r8(&mut self, flag: u8, test_set: bool) -> GbResult<()> {
+    let r8 = self.get_imm8()? as i8;
+    if (test_set && (self.af.lo & flag != 0)) || (!test_set && (self.af.lo & flag == 0)) {
+      // undo pc changes
+      self.pc -= 2;
+      // now jump!
+      self.pc = self.pc.wrapping_add_signed(r8 as i16);
+    }
+    Ok(())
+  }
+
+  fn jp_flag_a16(&mut self, flag: u8, test_set: bool) -> GbResult<()> {
+    let a16 = self.get_imm16()?;
+    if (test_set && (self.af.lo & flag != 0)) || (!test_set && (self.af.lo & flag == 0)) {
+      // now jump!
+      self.pc = a16;
+    }
+    Ok(())
+  }
+
+  fn call(&mut self, a16: u16) -> GbResult<()> {
+    self.sp = self.sp.wrapping_sub(2);
+    self.bus.lazy_dref_mut().write16(self.sp, self.pc)?;
+    self.pc = a16;
+    Ok(())
+  }
+
+  fn call_flag_a16(&mut self, flag: u8, test_set: bool) -> GbResult<()> {
+    let a16 = self.get_imm16()?;
+    if (test_set && (self.af.lo & flag != 0)) || (!test_set && (self.af.lo & flag == 0)) {
+      // now jump!
+      self.call(a16)?;
+    }
+    Ok(())
+  }
+
+  fn ret_flag(&mut self, flag: u8, test_set: bool) -> GbResult<()> {
+    if (test_set && (self.af.lo & flag != 0)) || (!test_set && (self.af.lo & flag == 0)) {
+      self.pc = self.bus.lazy_dref().read16(self.sp)?;
+      self.sp = self.sp.wrapping_add(2);
+    }
+    Ok(())
+  }
+
+  /// JR r8
+  ///
+  /// Jump to PC + r8 (signed)
+  ///
+  /// Flags: - - - -
   fn jr_r8(&mut self, _instr: u8) -> GbResult<()> {
-    unimplemented!()
+    // always jump
+    self.jr_flag_r8(0, false)?;
+    Ok(())
   }
 
+  /// JR NZ r8
+  ///
+  /// jump to PC + r8 (signed) if Z flag cleared
+  ///
+  /// Flags: - - - -
   fn jr_nz_r8(&mut self, _instr: u8) -> GbResult<()> {
-    unimplemented!()
+    self.jr_flag_r8(FLAG_Z, false)?;
+    Ok(())
   }
 
+  /// JR Z r8
+  ///
+  /// jump to PC + r8 (signed) if Z flag set
+  ///
+  /// Flags: - - - -
   fn jr_z_r8(&mut self, _instr: u8) -> GbResult<()> {
-    unimplemented!()
+    self.jr_flag_r8(FLAG_Z, true)?;
+    Ok(())
   }
 
+  /// JR NC r8
+  ///
+  /// jump to PC + r8 (signed) if C flag cleared
+  ///
+  /// Flags: - - - -
   fn jr_nc_r8(&mut self, _instr: u8) -> GbResult<()> {
-    unimplemented!()
+    self.jr_flag_r8(FLAG_C, false)?;
+    Ok(())
   }
 
+  /// JR C r8
+  ///
+  /// jump to PC + r8 (signed) if C flag set
+  ///
+  /// Flags: - - - -
   fn jr_c_r8(&mut self, _instr: u8) -> GbResult<()> {
-    unimplemented!()
+    self.jr_flag_r8(FLAG_C, true)?;
+    Ok(())
   }
 
+  /// JP NZ a16
+  ///
+  /// jump to imm16 if Z flag cleared
+  ///
+  /// Flags: - - - -
   fn jp_nz_a16(&mut self, _instr: u8) -> GbResult<()> {
-    unimplemented!()
+    self.jp_flag_a16(FLAG_Z, false)?;
+    Ok(())
   }
 
+  /// JP a16
+  ///
+  /// jump to imm16
+  ///
+  /// Flags: - - - -
   fn jp_a16(&mut self, _instr: u8) -> GbResult<()> {
-    unimplemented!()
+    // always jump
+    self.jp_flag_a16(0, false)?;
+    Ok(())
   }
 
+  /// JP Z a16
+  ///
+  /// jump to imm16 if Z flag set
+  ///
+  /// Flags: - - - -
   fn jp_z_a16(&mut self, _instr: u8) -> GbResult<()> {
-    unimplemented!()
+    self.jp_flag_a16(FLAG_Z, true)?;
+    Ok(())
   }
 
+  /// JP NC a16
+  ///
+  /// jump to imm16 if C flag cleared
+  ///
+  /// Flags: - - - -
   fn jp_nc_a16(&mut self, _instr: u8) -> GbResult<()> {
-    unimplemented!()
+    self.jp_flag_a16(FLAG_C, false)?;
+    Ok(())
   }
 
+  /// JP C a16
+  ///
+  /// jump to imm16 if C flag set
+  ///
+  /// Flags: - - - -
   fn jp_c_a16(&mut self, _instr: u8) -> GbResult<()> {
-    unimplemented!()
+    self.jp_flag_a16(FLAG_C, true)?;
+    Ok(())
   }
 
+  /// JP (HL)
+  ///
+  /// jump to address held by HL
+  ///
+  /// Flags: - - - -
   fn jp__hl_(&mut self, _instr: u8) -> GbResult<()> {
-    unimplemented!()
+    self.pc = self.hl.hilo();
+    Ok(())
   }
 
+  /// CALL NZ a16
+  ///
+  /// Call routine at a16 if Z flag cleared
+  ///
+  /// Flags: - - - -
   fn call_nz_a16(&mut self, _instr: u8) -> GbResult<()> {
-    unimplemented!()
+    self.call_flag_a16(FLAG_Z, false)?;
+    Ok(())
   }
 
+  /// CALL Z a16
+  ///
+  /// Call routine at a16 if Z flag set
+  ///
+  /// Flags: - - - -
   fn call_z_a16(&mut self, _instr: u8) -> GbResult<()> {
-    unimplemented!()
+    self.call_flag_a16(FLAG_Z, true)?;
+    Ok(())
   }
 
+  /// CALL a16
+  ///
+  /// Call routine at a16
+  ///
+  /// Flags: - - - -
   fn call_a16(&mut self, _instr: u8) -> GbResult<()> {
-    unimplemented!()
+    // always jump
+    self.call_flag_a16(0, false)?;
+    Ok(())
   }
 
+  /// CALL NC a16
+  ///
+  /// Call routine at a16 if C flag cleared
+  ///
+  /// Flags: - - - -
   fn call_nc_a16(&mut self, _instr: u8) -> GbResult<()> {
-    unimplemented!()
+    self.call_flag_a16(FLAG_C, false)?;
+    Ok(())
   }
 
+  /// CALL C a16
+  ///
+  /// Call routine at a16 if C flag set
+  ///
+  /// Flags: - - - -
   fn call_c_a16(&mut self, _instr: u8) -> GbResult<()> {
-    unimplemented!()
+    self.call_flag_a16(FLAG_C, true)?;
+    Ok(())
   }
 
+  /// RST 00h
+  ///
+  /// Call to 00h
+  ///
+  /// Flags: - - - -
   fn rst_00h(&mut self, _instr: u8) -> GbResult<()> {
-    unimplemented!()
+    self.call(0x00)?;
+    Ok(())
   }
 
+  /// RST 08h
+  ///
+  /// Call to 08h
+  ///
+  /// Flags: - - - -
   fn rst_08h(&mut self, _instr: u8) -> GbResult<()> {
-    unimplemented!()
+    self.call(0x08)?;
+    Ok(())
   }
 
+  /// RST 10h
+  ///
+  /// Call to 10h
+  ///
+  /// Flags: - - - -
   fn rst_10h(&mut self, _instr: u8) -> GbResult<()> {
-    unimplemented!()
+    self.call(0x10)?;
+    Ok(())
   }
 
+  /// RST 18h
+  ///
+  /// Call to 18h
+  ///
+  /// Flags: - - - -
   fn rst_18h(&mut self, _instr: u8) -> GbResult<()> {
-    unimplemented!()
+    self.call(0x18)?;
+    Ok(())
   }
 
+  /// RST 20h
+  ///
+  /// Call to 20h
+  ///
+  /// Flags: - - - -
   fn rst_20h(&mut self, _instr: u8) -> GbResult<()> {
-    unimplemented!()
+    self.call(0x20)?;
+    Ok(())
   }
 
+  /// RST 28h
+  ///
+  /// Call to 28h
+  ///
+  /// Flags: - - - -
   fn rst_28h(&mut self, _instr: u8) -> GbResult<()> {
-    unimplemented!()
+    self.call(0x28)?;
+    Ok(())
   }
 
+  /// RST 30h
+  ///
+  /// Call to 30h
+  ///
+  /// Flags: - - - -
   fn rst_30h(&mut self, _instr: u8) -> GbResult<()> {
-    unimplemented!()
+    self.call(0x30)?;
+    Ok(())
   }
 
+  /// RST 38h
+  ///
+  /// Call to 38h
+  ///
+  /// Flags: - - - -
   fn rst_38h(&mut self, _instr: u8) -> GbResult<()> {
-    unimplemented!()
+    self.call(0x38)?;
+    Ok(())
   }
 
+  /// RET
+  ///
+  /// Return from subroutine
+  ///
+  /// Flags: - - - -
   fn ret(&mut self, _instr: u8) -> GbResult<()> {
-    unimplemented!()
+    // always ret
+    self.ret_flag(0, false)
   }
 
+  /// RET NZ
+  ///
+  /// Return from subroutine if Z flag cleared
+  ///
+  /// Flags: - - - -
+  fn req_nz(&mut self, _instr: u8) -> GbResult<()> {
+    self.ret_flag(FLAG_Z, false)
+  }
+
+  /// RET Z
+  ///
+  /// Return from subroutine if Z flag set
+  ///
+  /// Flags: - - - -
   fn ret_z(&mut self, _instr: u8) -> GbResult<()> {
-    unimplemented!()
+    self.ret_flag(FLAG_Z, true)
   }
 
+  /// RET NC
+  ///
+  /// Return from subroutine if C flag cleared
+  ///
+  /// Flags: - - - -
   fn ret_nc(&mut self, _instr: u8) -> GbResult<()> {
-    unimplemented!()
+    self.ret_flag(FLAG_C, false)
   }
 
+  /// RET C
+  ///
+  /// Return from subroutine if C flag set
+  ///
+  /// Flags: - - - -
   fn ret_c(&mut self, _instr: u8) -> GbResult<()> {
-    unimplemented!()
+    self.ret_flag(FLAG_C, true)
   }
 
+  /// RETI
+  ///
+  /// Return and enable interrupts
+  ///
+  /// Flags: - - - -
   fn reti(&mut self, _instr: u8) -> GbResult<()> {
-    unimplemented!()
+    todo!("Implement interrupts")
   }
 
   // *** Other ***
 
-  fn req_nz(&mut self, _instr: u8) -> GbResult<()> {
-    unimplemented!()
+  fn pop(&mut self) -> GbResult<u16> {
+    let val = self.bus.lazy_dref().read16(self.sp)?;
+    self.sp = self.sp.wrapping_add(2);
+    Ok(val)
   }
 
+  fn push(&mut self, rr: u16) -> GbResult<()> {
+    self.sp = self.sp.wrapping_sub(2);
+    self.bus.lazy_dref_mut().write16(self.sp, rr)
+  }
+
+  /// POP BC
+  ///
+  /// Pop from the stack and store into BC
+  ///
+  /// Flags: - - - -
   fn pop_bc(&mut self, _instr: u8) -> GbResult<()> {
-    unimplemented!()
+    let val = self.pop()?;
+    self.bc.set_u16(val);
+    Ok(())
   }
 
+  /// POP DE
+  ///
+  /// Pop from the stack and store into DE
+  ///
+  /// Flags: - - - -
   fn pop_de(&mut self, _instr: u8) -> GbResult<()> {
-    unimplemented!()
+    let val = self.pop()?;
+    self.de.set_u16(val);
+    Ok(())
   }
 
+  /// POP HL
+  ///
+  /// Pop from the stack and store into HL
+  ///
+  /// Flags: - - - -
   fn pop_hl(&mut self, _instr: u8) -> GbResult<()> {
-    unimplemented!()
+    let val = self.pop()?;
+    self.hl.set_u16(val);
+    Ok(())
   }
 
+  /// POP AF
+  ///
+  /// Pop from the stack and store into AF
+  ///
+  /// Flags: Z N H C
   fn pop_af(&mut self, _instr: u8) -> GbResult<()> {
-    unimplemented!()
+    let val = self.pop()?;
+    self.af.set_u16(val);
+    Ok(())
   }
 
+  /// PUSH BC
+  ///
+  /// Push BC to the stack
+  ///
+  /// Flags: - - - -
   fn push_bc(&mut self, _instr: u8) -> GbResult<()> {
-    unimplemented!()
+    self.push(self.bc.hilo())
   }
 
+  /// PUSH DE
+  ///
+  /// Push DE to the stack
+  ///
+  /// Flags: - - - -
   fn push_de(&mut self, _instr: u8) -> GbResult<()> {
-    unimplemented!()
+    self.push(self.de.hilo())
   }
 
+  /// PUSH HL
+  ///
+  /// Push HL to the stack
+  ///
+  /// Flags: - - - -
   fn push_hl(&mut self, _instr: u8) -> GbResult<()> {
-    unimplemented!()
+    self.push(self.hl.hilo())
   }
 
+  /// PUSH AF
+  ///
+  /// Push AF to the stack
+  ///
+  /// Flags: - - - -
   fn push_af(&mut self, _instr: u8) -> GbResult<()> {
-    unimplemented!()
+    self.push(self.af.hilo())
   }
 
+  /// DI
+  ///
+  /// Disable Interrupts
+  ///
+  /// Flags: - - - -
   fn di(&mut self, _instr: u8) -> GbResult<()> {
-    unimplemented!()
+    todo!("Implement interrupts")
   }
 
+  /// EI
+  ///
+  /// Enable Interrupts
+  ///
+  /// Flags: - - - -
   fn ei(&mut self, _instr: u8) -> GbResult<()> {
-    unimplemented!()
+    todo!("Implement interrupts")
   }
 
   // *** Prefix CB ***

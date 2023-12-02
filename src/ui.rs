@@ -161,16 +161,24 @@ impl Ui {
   }
 
   fn ui_cpu_reg(&self, ctx: &Context, cpu: &mut Cpu) {
-    egui::Window::new("CPU Registers").show(ctx, |ui| {
-      ui.monospace(format!("[PC] {:04x}", cpu.pc));
-      ui.monospace(format!("[SP] {:04x}", cpu.sp));
-      ui.monospace(format!("[A]  {:02x}", cpu.af.hi));
-      ui.monospace(format!("[B]  {:02x}", cpu.bc.hi));
-      ui.monospace(format!("[C]  {:02x}", cpu.bc.lo));
-      ui.monospace(format!("[D]  {:02x}", cpu.de.hi));
-      ui.monospace(format!("[E]  {:02x}", cpu.de.lo));
-      ui.monospace(format!("[F]  {:02x}", cpu.af.lo));
-    });
+    egui::Window::new("CPU Registers")
+      .resizable(false)
+      .show(ctx, |ui| {
+        ui.monospace(format!("[PC] {:04x}", cpu.pc));
+        ui.monospace(format!("[SP] {:04x}", cpu.sp));
+        ui.monospace("");
+        ui.monospace(format!("[A]  {:02x}  [F] {:02x}", cpu.af.hi, cpu.af.lo));
+        ui.monospace(format!("[B]  {:02x}  [C] {:02x}", cpu.bc.hi, cpu.bc.lo));
+        ui.monospace(format!("[D]  {:02x}  [D] {:02x}", cpu.de.hi, cpu.de.lo));
+        ui.monospace(format!("[H]  {:02x}  [L] {:02x}", cpu.hl.hi, cpu.hl.lo));
+        ui.monospace("");
+        let f = cpu.af.lo;
+        let z = if f & crate::cpu::FLAG_Z > 0 { 1 } else { 0 };
+        let n = if f & crate::cpu::FLAG_N > 0 { 1 } else { 0 };
+        let h = if f & crate::cpu::FLAG_H > 0 { 1 } else { 0 };
+        let c = if f & crate::cpu::FLAG_C > 0 { 1 } else { 0 };
+        ui.monospace(format!("Z:{}  N:{}  H:{}  C:{}", z, n, h, c));
+      });
   }
 
   fn ui_cpu_dasm(&self, ctx: &Context, cpu: &Cpu) {
