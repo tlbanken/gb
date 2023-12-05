@@ -9,6 +9,7 @@ mod event;
 mod fps;
 mod gb;
 mod logger;
+mod ppu;
 mod ram;
 mod screen;
 mod state;

@@ -176,7 +176,7 @@ impl Cpu {
     // read next instruction
     self.history.push(self.pc);
     let instr = self.bus.lazy_dref().read8(self.pc)?;
-    self.pc += 1;
+    self.pc = self.pc.wrapping_add(1);
 
     // instruction dispatch
     self.dispatcher[instr as usize](self, instr)?;
@@ -421,8 +421,8 @@ impl Cpu {
   ///
   /// Dispatches an instruction which has the "CB" prefix.
   fn prefix_cb(&mut self, _instr: u8) -> GbResult<()> {
-    self.pc = self.pc.wrapping_add(1);
     let instr = self.bus.lazy_dref().read8(self.pc)?;
+    self.pc = self.pc.wrapping_add(1);
     self.dispatcher_cb[instr as usize](self, instr)
   }
 
@@ -2789,8 +2789,6 @@ impl Cpu {
   fn jr_flag_r8(&mut self, flag: u8, test_set: bool) -> GbResult<()> {
     let r8 = self.get_imm8()? as i8;
     if (test_set && (self.af.lo & flag != 0)) || (!test_set && (self.af.lo & flag == 0)) {
-      // undo pc changes
-      self.pc -= 2;
       // now jump!
       self.pc = self.pc.wrapping_add_signed(r8 as i16);
     }

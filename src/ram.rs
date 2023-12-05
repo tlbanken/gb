@@ -25,19 +25,11 @@ impl Ram {
   }
 
   pub fn read(&self, addr: u16) -> GbResult<u8> {
-    let val = match self.data.get(addr as usize) {
-      Some(v) => v,
-      None => return gb_err!(GbErrorType::OutOfBounds),
-    };
-    Ok(*val)
+    Ok(self.data[addr as usize])
   }
 
   pub fn write(&mut self, addr: u16, val: u8) -> GbResult<()> {
-    let rv = match self.data.get_mut(addr as usize) {
-      Some(v) => v,
-      None => return gb_err!(GbErrorType::OutOfBounds),
-    };
-    *rv = val;
+    self.data[addr as usize] = val;
     Ok(())
   }
 

@@ -6,4 +6,5 @@ pub enum UserEvent {
   EmuPause,
   EmuStep,
   EmuPlay,
+  EmuReset,
 }

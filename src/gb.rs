@@ -100,7 +100,7 @@ impl Gameboy {
       // run as fast as possible
       control_flow.set_poll();
 
-      self.handle_events(event, control_flow);
+      self.handle_events(event, control_flow).unwrap();
 
       // system step
       self.state.step().unwrap();
@@ -138,7 +138,11 @@ impl Gameboy {
     // no return
   }
 
-  fn handle_events(&mut self, event: Event<UserEvent>, control_flow: &mut ControlFlow) {
+  fn handle_events(
+    &mut self,
+    event: Event<UserEvent>,
+    control_flow: &mut ControlFlow,
+  ) -> GbResult<()> {
     match event {
       // window events
       Event::WindowEvent {
@@ -165,10 +169,16 @@ impl Gameboy {
         UserEvent::EmuPause => self.state.flow.paused = true,
         UserEvent::EmuPlay => self.state.flow.paused = false,
         UserEvent::EmuStep => self.state.flow.step = true,
+        UserEvent::EmuReset => {
+          let paused = self.state.flow.paused;
+          self.state = GbState::new(paused);
+          self.state.init()?;
+        }
         _ => {}
       },
       _ => {}
     }
+    Ok(())
   }
 }
 

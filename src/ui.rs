@@ -131,6 +131,12 @@ impl Ui {
               .send_event(UserEvent::EmuPause)
               .unwrap();
           }
+          if ui.button("Reset").clicked() {
+            self
+              .event_loop_proxy
+              .send_event(UserEvent::EmuReset)
+              .unwrap();
+          }
           ui.monospace("  |  ");
 
           // fps

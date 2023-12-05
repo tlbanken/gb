@@ -2,7 +2,7 @@
 
 use std::{cell::RefCell, rc::Rc};
 
-use crate::{bus::Bus, cart::Cartridge, cpu::Cpu, err::GbResult, ram::Ram};
+use crate::{bus::Bus, cart::Cartridge, cpu::Cpu, err::GbResult, ppu::Ppu, ram::Ram};
 
 pub struct EmuFlow {
   pub paused: bool,
@@ -24,6 +24,7 @@ pub struct GbState {
   pub wram: Rc<RefCell<Ram>>,
   pub cart: Rc<RefCell<Cartridge>>,
   pub cpu: Rc<RefCell<Cpu>>,
+  pub gpu: Rc<RefCell<Ppu>>,
   pub flow: EmuFlow,
   // TODO: maybe keep event proxy for signaling gpu draws
 }
@@ -36,6 +37,7 @@ impl GbState {
       wram: Rc::new(RefCell::new(Ram::new(8 * 1024))),
       cart: Rc::new(RefCell::new(Cartridge::new())),
       cpu: Rc::new(RefCell::new(Cpu::new())),
+      gpu: Rc::new(RefCell::new(Ppu::new())),
       flow: EmuFlow::new(paused),
     }
   }
@@ -47,6 +49,7 @@ impl GbState {
     self.bus.borrow_mut().connect_eram(self.eram.clone())?;
     self.bus.borrow_mut().connect_wram(self.wram.clone())?;
     self.bus.borrow_mut().connect_cartridge(self.cart.clone())?;
+    self.bus.borrow_mut().connect_gpu(self.gpu.clone())?;
 
     // connect modules to bus
     self.cpu.borrow_mut().connect_bus(self.bus.clone())?;

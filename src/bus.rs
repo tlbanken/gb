@@ -9,12 +9,15 @@ use crate::{
   cart::Cartridge,
   err::{GbError, GbErrorType, GbResult},
   gb_err,
+  ppu::Ppu,
   ram::Ram,
   util::LazyDref,
 };
 
 const CART_START: u16 = 0x0000;
 const CART_END: u16 = 0x7fff;
+const GPU_START: u16 = 0x8000;
+const GPU_END: u16 = 0x9fff;
 const ERAM_START: u16 = 0xa000;
 const ERAM_END: u16 = 0xbfff;
 const WRAM_START: u16 = 0xc000;
@@ -24,6 +27,7 @@ pub struct Bus {
   wram: Option<Rc<RefCell<Ram>>>,
   eram: Option<Rc<RefCell<Ram>>>,
   cart: Option<Rc<RefCell<Cartridge>>>,
+  gpu: Option<Rc<RefCell<Ppu>>>,
 }
 
 impl Bus {
@@ -32,6 +36,7 @@ impl Bus {
       wram: None,
       eram: None,
       cart: None,
+      gpu: None,
     }
   }
 
@@ -65,17 +70,29 @@ impl Bus {
     Ok(())
   }
 
+  /// Adds a reference to the gpu to the bus
+  pub fn connect_gpu(&mut self, gpu: Rc<RefCell<Ppu>>) -> GbResult<()> {
+    debug!("Connecting gpu to the bus");
+    match self.gpu {
+      None => self.gpu = Some(gpu),
+      Some(_) => return gb_err!(GbErrorType::AlreadyInitialized),
+    }
+    Ok(())
+  }
+
   pub fn read8(&self, addr: u16) -> GbResult<u8> {
     #[cfg(debug_assertions)]
     trace!("READ8 ${:04x}", addr);
 
+    // read with relative addressing
     match addr {
-      CART_START..=CART_END => self.cart.lazy_dref().read(addr),
-      ERAM_START..=ERAM_END => self.eram.lazy_dref().read(addr),
-      WRAM_START..=WRAM_END => self.wram.lazy_dref().read(addr),
+      CART_START..=CART_END => self.cart.lazy_dref().read(addr - CART_START),
+      GPU_START..=GPU_END => self.gpu.lazy_dref().read(addr - GPU_START),
+      ERAM_START..=ERAM_END => self.eram.lazy_dref().read(addr - ERAM_START),
+      WRAM_START..=WRAM_END => self.wram.lazy_dref().read(addr - WRAM_START),
       // unsupported
       _ => {
-        warn!("Unsupported read address: [0x{:04x}]", addr);
+        warn!("Unsupported read8 address: [0x{:04x}]", addr);
         Ok((0))
       }
     }
@@ -85,23 +102,28 @@ impl Bus {
     #[cfg(debug_assertions)]
     trace!("READ8 ${:04x}", addr);
 
+    // read with relative addressing
     Ok(match addr {
       CART_START..=CART_END => u16::from_le_bytes([
-        self.cart.lazy_dref().read(addr)?,
-        self.cart.lazy_dref().read(addr + 1)?,
+        self.cart.lazy_dref().read(addr - CART_START)?,
+        self.cart.lazy_dref().read(addr - CART_START + 1)?,
+      ]),
+      GPU_START..=GPU_END => u16::from_le_bytes([
+        self.gpu.lazy_dref().read(addr - GPU_START)?,
+        self.gpu.lazy_dref().read(addr - GPU_START + 1)?,
       ]),
       ERAM_START..=ERAM_END => u16::from_le_bytes([
-        self.eram.lazy_dref().read(addr)?,
-        self.eram.lazy_dref().read(addr + 1)?,
+        self.eram.lazy_dref().read(addr - ERAM_START)?,
+        self.eram.lazy_dref().read(addr - ERAM_START + 1)?,
       ]),
       WRAM_START..=WRAM_END => u16::from_le_bytes([
-        self.wram.lazy_dref().read(addr)?,
-        self.wram.lazy_dref().read(addr + 1)?,
+        self.wram.lazy_dref().read(addr - WRAM_START)?,
+        self.wram.lazy_dref().read(addr - WRAM_START + 1)?,
       ]),
 
       // unsupported
       _ => {
-        warn!("Unsupported read address: [0x{:04x}]", addr);
+        warn!("Unsupported read16 address: [0x{:04x}]", addr);
         0
       }
     })
@@ -111,16 +133,15 @@ impl Bus {
     #[cfg(debug_assertions)]
     trace!("WRITE 0x{:02x} ({}) to ${:04X}", val, val, addr);
 
+    // write with relative addressing
     match addr {
-      // cartridge banks
-      CART_START..=CART_END => self.cart.lazy_dref_mut().write(addr, val),
-      // external ram
-      ERAM_START..=ERAM_END => self.eram.lazy_dref_mut().write(addr, val),
-      // working ram
-      WRAM_START..=WRAM_END => self.wram.lazy_dref_mut().write(addr, val),
+      CART_START..=CART_END => self.cart.lazy_dref_mut().write(addr - CART_START, val),
+      GPU_START..=GPU_END => self.gpu.lazy_dref_mut().write(addr - GPU_START, val),
+      ERAM_START..=ERAM_END => self.eram.lazy_dref_mut().write(addr - ERAM_START, val),
+      WRAM_START..=WRAM_END => self.wram.lazy_dref_mut().write(addr - WRAM_START, val),
       // unsupported
       _ => {
-        warn!("Unsupported write address: [0x{:04x}]", addr);
+        warn!("Unsupported write8 address: [0x{:04x}]", addr);
         Ok(())
       }
     }
@@ -130,26 +151,52 @@ impl Bus {
     #[cfg(debug_assertions)]
     trace!("WRITE 0x{:02x} ({}) to ${:04X}", val, val, addr);
 
+    // write with relative addressing
     let bytes = val.to_le_bytes();
     Ok(match addr {
-      // cartridge banks
       CART_START..=CART_END => {
-        self.cart.lazy_dref_mut().write(addr, bytes[0])?;
-        self.cart.lazy_dref_mut().write(addr, bytes[1])?;
+        self
+          .cart
+          .lazy_dref_mut()
+          .write(addr - CART_START, bytes[0])?;
+        self
+          .cart
+          .lazy_dref_mut()
+          .write(addr - CART_START, bytes[1])?;
       }
-      // external ram
+      GPU_START..=GPU_END => {
+        self
+          .cart
+          .lazy_dref_mut()
+          .write(addr - GPU_START, bytes[0])?;
+        self
+          .cart
+          .lazy_dref_mut()
+          .write(addr - GPU_START, bytes[1])?;
+      }
       ERAM_START..=ERAM_END => {
-        self.eram.lazy_dref_mut().write(addr, bytes[0])?;
-        self.eram.lazy_dref_mut().write(addr, bytes[1])?;
+        self
+          .eram
+          .lazy_dref_mut()
+          .write(addr - ERAM_START, bytes[0])?;
+        self
+          .eram
+          .lazy_dref_mut()
+          .write(addr - ERAM_START, bytes[1])?;
       }
-      // working ram
       WRAM_START..=WRAM_END => {
-        self.wram.lazy_dref_mut().write(addr, bytes[0])?;
-        self.wram.lazy_dref_mut().write(addr, bytes[1])?;
+        self
+          .wram
+          .lazy_dref_mut()
+          .write(addr - WRAM_START, bytes[0])?;
+        self
+          .wram
+          .lazy_dref_mut()
+          .write(addr - WRAM_START, bytes[1])?;
       }
       // unsupported
       _ => {
-        warn!("Unsupported write address: [0x{:04x}]", addr);
+        warn!("Unsupported write16 address: [0x{:04x}]", addr);
       }
     })
   }
