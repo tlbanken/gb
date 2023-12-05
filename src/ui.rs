@@ -4,8 +4,8 @@ use egui::{
   self, epaint::Shadow, Color32, Context, FullOutput, RawInput, RichText, Style, Visuals,
 };
 use egui_winit::winit::event_loop::EventLoopProxy;
-use std::collections::VecDeque;
 
+use crate::bus::Bus;
 use crate::dasm::Dasm;
 use crate::util::LazyDref;
 use crate::{cpu::Cpu, event::UserEvent, state::GbState};
@@ -14,8 +14,7 @@ pub struct UiState {
   pub show_menu_bar: bool,
   pub show_cpu_reg_window: bool,
   pub show_cpu_dasm_window: bool,
-  pub show_wram_window: bool,
-  pub show_eram_window: bool,
+  pub show_mem_window: bool,
 }
 
 impl UiState {
@@ -24,8 +23,7 @@ impl UiState {
       show_menu_bar: true,
       show_cpu_reg_window: false,
       show_cpu_dasm_window: false,
-      show_eram_window: false,
-      show_wram_window: false,
+      show_mem_window: false,
     }
   }
 
@@ -97,12 +95,8 @@ impl Ui {
                 ui.close_menu();
               }
             });
-            if ui.button("ERAM").clicked() {
-              ui_state.show_eram_window = !ui_state.show_eram_window;
-              ui.close_menu();
-            }
-            if ui.button("WRAM").clicked() {
-              ui_state.show_wram_window = !ui_state.show_wram_window;
+            if ui.button("Memory").clicked() {
+              ui_state.show_mem_window = !ui_state.show_mem_window;
               ui.close_menu();
             }
           });
@@ -158,11 +152,8 @@ impl Ui {
     if ui_state.show_cpu_dasm_window {
       self.ui_cpu_dasm(ctx, &gb_state.cpu.borrow());
     }
-    if ui_state.show_eram_window {
-      self.ui_eram(ctx);
-    }
-    if ui_state.show_wram_window {
-      self.ui_wram(ctx);
+    if ui_state.show_mem_window {
+      self.ui_mem(ctx, &mut gb_state.bus.borrow_mut());
     }
   }
 
@@ -234,18 +225,46 @@ impl Ui {
     }
   }
 
-  fn ui_eram(&self, ctx: &Context) {
-    egui::Window::new("ERAM Dump").show(ctx, |ui| {
-      // TODO
-      ui.monospace("I am a ERAM");
-    });
-  }
+  fn ui_mem(&self, ctx: &Context, bus: &mut Bus) {
+    egui::Window::new("Memory Dump")
+      .resizable(true)
+      .show(ctx, |ui| {
+        // set up starting state
+        let num_cols = 8;
+        let total_mem_size = 0x1_0000;
 
-  fn ui_wram(&self, ctx: &Context) {
-    egui::Window::new("WRAM Dump").show(ctx, |ui| {
-      // TODO
-      ui.monospace("I am a WRAM");
-    });
+        let text_style = egui::TextStyle::Monospace;
+        let row_height = ui.text_style_height(&text_style);
+        let num_rows = total_mem_size / num_cols;
+        egui::ScrollArea::both().auto_shrink(false).show_rows(
+          ui,
+          row_height,
+          num_rows,
+          |ui, row_range| {
+            ui.style_mut().wrap = Some(false);
+            // memory dump
+            for row in row_range {
+              let row_addr = row * num_cols;
+              let mut row_str = String::from(format!("{:04X}  ", row_addr));
+              let mut as_char_str = String::from(" | ");
+              for col in 0..num_cols {
+                let addr = row_addr + col;
+                let byte = bus.read8(addr as u16).unwrap();
+                row_str.push_str(format!("{:02X} ", byte).as_str());
+                let c = if (33..126).contains(&byte) {
+                  byte as char
+                } else {
+                  '.'
+                };
+                as_char_str.push(c);
+              }
+              as_char_str.push_str(" |");
+              row_str.push_str(as_char_str.as_str());
+              ui.monospace(row_str);
+            }
+          },
+        );
+      });
   }
 
   fn ui_reso(&self, ui: &mut egui::Ui) {

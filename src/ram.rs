@@ -13,7 +13,7 @@ use crate::{
 };
 
 pub struct Ram {
-  data: Vec<u8>,
+  pub data: Vec<u8>,
 }
 
 impl Ram {
