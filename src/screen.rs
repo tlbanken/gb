@@ -11,9 +11,9 @@ const GB_RESOLUTION: Resolution = Resolution {
 const NUM_PIXELS: usize = (GB_RESOLUTION.width * GB_RESOLUTION.height) as usize;
 
 const PIXEL_CLEAR: Color = Color {
-  r: 1.0,
-  g: 0.0,
-  b: 0.0,
+  r: 0.1,
+  g: 0.1,
+  b: 0.2,
   a: 1.0,
 };
 

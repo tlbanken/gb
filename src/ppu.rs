@@ -1,7 +1,11 @@
 //! PPU for the Gameboy emulator.
 
-use crate::err::GbResult;
+use crate::err::{GbError, GbErrorType, GbResult};
+use crate::gb_err;
+use crate::screen::Screen;
 use log::warn;
+use std::cell::RefCell;
+use std::rc::Rc;
 
 // 8Kb of video memory
 const VRAM_SIZE: usize = 8 * 1024;
@@ -131,6 +135,9 @@ pub struct Ppu {
   pub lyc: u8,
   /// LCD Status register
   pub stat: LcdStatus,
+
+  // Screen to draw to
+  screen: Option<Rc<RefCell<Screen>>>,
 }
 
 impl Ppu {
@@ -141,7 +148,16 @@ impl Ppu {
       stat: LcdStatus::new(),
       ly: 0,
       lyc: 0,
+      screen: None,
     }
+  }
+
+  pub fn connect_screen(&mut self, screen: Rc<RefCell<Screen>>) -> GbResult<()> {
+    match self.screen {
+      None => self.screen = Some(screen),
+      Some(_) => return gb_err!(GbErrorType::AlreadyInitialized),
+    }
+    Ok(())
   }
 
   pub fn step(&mut self) -> GbResult<u8> {

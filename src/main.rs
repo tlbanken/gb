@@ -6,13 +6,13 @@ mod cpu;
 mod dasm;
 mod err;
 mod event;
-mod fps;
 mod gb;
 mod logger;
 mod ppu;
 mod ram;
 mod screen;
 mod state;
+mod tick_counter;
 mod ui;
 mod util;
 mod video;
@@ -27,7 +27,6 @@ fn main() {
 
   // initialize hardware
   let mut gameboy = gb::Gameboy::new(log_level_filter);
-  gameboy.init().unwrap();
 
   // start the emulation
   gameboy.run().unwrap();

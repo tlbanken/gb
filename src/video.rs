@@ -8,11 +8,15 @@ use egui_wgpu::{wgpu, WgpuConfiguration};
 use egui_winit::winit;
 use egui_winit::winit::event::WindowEvent;
 use egui_winit::winit::window::Window;
+use std::cell::RefCell;
+use std::rc::Rc;
 
-use crate::fps::Fps;
 use crate::screen::{Color, Pos, Resolution, Screen};
 use crate::state::GbState;
+use crate::tick_counter::TickCounter;
 use crate::ui::{Ui, UiState};
+
+const FPS_ALPHA: f32 = 0.9;
 
 const CLEAR_COLOR: wgpu::Color = wgpu::Color {
   r: 0.0,
@@ -22,7 +26,7 @@ const CLEAR_COLOR: wgpu::Color = wgpu::Color {
 };
 
 pub struct Video {
-  screen: Screen,
+  screen: Rc<RefCell<Screen>>,
   surface: wgpu::Surface,
   device: wgpu::Device,
   queue: wgpu::Queue,
@@ -35,7 +39,7 @@ pub struct Video {
   ui: Ui,
   egui_state: egui_winit::State,
   ui_state: UiState,
-  fps: Fps,
+  fps: TickCounter,
   // The window must be declared after the surface so
   // it gets dropped after it as the surface contains
   // unsafe references to the window's resources.
@@ -83,7 +87,7 @@ impl Video {
       .unwrap();
 
     // init the gb screen
-    let screen = Screen::new(&device);
+    let screen = Rc::new(RefCell::new(Screen::new(&device)));
 
     // configure surface
     let surface_caps = surface.get_capabilities(&adapter);
@@ -142,7 +146,10 @@ impl Video {
     // create pipeline layout
     let render_pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
       label: Some("Render Pipeline Layout"),
-      bind_group_layouts: &[&resolution_bind_group_layout, screen.group_layout()],
+      bind_group_layouts: &[
+        &resolution_bind_group_layout,
+        screen.borrow().group_layout(),
+      ],
       push_constant_ranges: &[],
     });
 
@@ -193,7 +200,7 @@ impl Video {
     let egui_renderer = egui_wgpu::Renderer::new(&device, config.format, None, 1);
     let ui_state = UiState::new();
 
-    let fps = Fps::new();
+    let fps = TickCounter::new(FPS_ALPHA);
 
     Self {
       screen,
@@ -218,6 +225,10 @@ impl Video {
     &self.window
   }
 
+  pub fn screen(&self) -> Rc<RefCell<Screen>> {
+    self.screen.clone()
+  }
+
   pub fn handle_window_event(&mut self, event: WindowEvent) -> bool {
     let gb_repaint = match event {
       WindowEvent::Resized(size) => {
@@ -235,15 +246,11 @@ impl Video {
     gb_repaint || ui_repaint
   }
 
-  pub fn set_pixel(&mut self, pos: Pos, col: Color) {
-    self.screen.set_pixel(pos, col);
-  }
-
   pub fn render(&mut self, gb_state: &mut GbState) -> Result<(), wgpu::SurfaceError> {
     self.fps.tick();
 
     // update screen colors from its buffer state
-    self.screen.write_buffer(&mut self.queue);
+    self.screen.borrow_mut().write_buffer(&mut self.queue);
 
     // first grab a frame to render
     let output = self.surface.get_current_texture()?;
@@ -255,7 +262,9 @@ impl Video {
     self.render_gameboy(&view);
 
     // now render egui
-    self.render_ui(&view, gb_state, self.fps.fps());
+    let fps = self.fps.tps();
+    // self.fps.lap();
+    self.render_ui(&view, gb_state, fps);
 
     // finally, draw to the screen
     output.present();
@@ -272,6 +281,7 @@ impl Video {
 
     // create scope to drop the render pass. Avoids ownership issues with mut
     // borrowing on encoder
+    let mut screen = self.screen.borrow_mut();
     {
       // create the render pass
       let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -290,7 +300,7 @@ impl Video {
 
       render_pass.set_pipeline(&self.render_pipeline);
       render_pass.set_bind_group(0, &self.resolution_bind_group, &[]);
-      render_pass.set_bind_group(1, &self.screen.bind_group(), &[]);
+      render_pass.set_bind_group(1, &screen.bind_group(), &[]);
       render_pass.draw(0..6, 0..1);
     }
 
@@ -298,7 +308,7 @@ impl Video {
     self.queue.submit(std::iter::once(encoder.finish()));
   }
 
-  fn render_ui(&mut self, view: &TextureView, gb_state: &mut GbState, fps: u32) {
+  fn render_ui(&mut self, view: &TextureView, gb_state: &mut GbState, fps: f32) {
     let raw_input = self.egui_state.take_egui_input(&self.window);
     let full_output = self
       .ui

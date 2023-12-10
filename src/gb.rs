@@ -43,7 +43,7 @@ const TARGET_FRAME_TIME_MS: u128 = 1000 / 60;
 pub struct Gameboy {
   is_init: bool,
   state: GbState,
-  video: Option<Video>,
+  // video: Option<Video>,
 }
 
 impl Gameboy {
@@ -55,23 +55,11 @@ impl Gameboy {
     Gameboy {
       state,
       is_init: false,
-      video: None,
+      // video: None,
     }
-  }
-
-  pub fn init(&mut self) -> GbResult<()> {
-    info!("Initializing system");
-
-    self.state.init()?;
-
-    self.is_init = true;
-    Ok(())
   }
 
   pub fn run(mut self) -> GbResult<()> {
-    if !self.is_init {
-      return gb_err!(GbErrorType::NotInitialized);
-    }
     info!("Starting emulation");
 
     // build event loop and window with custom event support
@@ -92,7 +80,11 @@ impl Gameboy {
     let ui = Ui::new(event_loop.create_proxy());
 
     // setup render backend
-    self.video = Some(pollster::block_on(Video::new(window, ui)));
+    let mut video = pollster::block_on(Video::new(window, ui));
+    // self.video = Some(pollster::block_on(Video::new(window, ui)));
+
+    // initialize the gb state
+    self.state.init(video.screen())?;
 
     let mut last_render = Instant::now();
     // run as fast as possible
@@ -100,20 +92,20 @@ impl Gameboy {
       // run as fast as possible
       control_flow.set_poll();
 
-      self.handle_events(event, control_flow).unwrap();
+      self.handle_events(event, control_flow, &mut video).unwrap();
 
       // system step
       self.state.step().unwrap();
 
       // demo draw
-      for y in 0..144 {
-        for x in 0..160 {
-          self.video.as_mut().unwrap().set_pixel(
-            Pos { x, y },
-            Color::new(y as f32 / 144.0, x as f32 / 160.0, 0.0),
-          );
-        }
-      }
+      // for y in 0..144 {
+      //   for x in 0..160 {
+      //     self.video.as_mut().unwrap().set_pixel(
+      //       Pos { x, y },
+      //       Color::new(y as f32 / 144.0, x as f32 / 160.0, 0.0),
+      //     );
+      //   }
+      // }
 
       // TODO: find better pace for rendering
       // draw the window at least every 1/60 of a second
@@ -127,12 +119,7 @@ impl Gameboy {
       };
 
       if should_redraw {
-        self
-          .video
-          .as_mut()
-          .unwrap()
-          .render(&mut self.state)
-          .unwrap();
+        video.render(&mut self.state).unwrap();
       }
     });
     // no return
@@ -142,6 +129,7 @@ impl Gameboy {
     &mut self,
     event: Event<UserEvent>,
     control_flow: &mut ControlFlow,
+    video: &mut Video,
   ) -> GbResult<()> {
     match event {
       // window events
@@ -155,14 +143,13 @@ impl Gameboy {
           }
           _ => (),
         };
-        self.video.as_mut().unwrap().handle_window_event(wevent);
+        video.handle_window_event(wevent);
       }
       Event::UserEvent(event) => match event {
         UserEvent::RequestResize(w, h) => {
-          self
-            .video
-            .as_mut()
-            .unwrap()
+          video
+            // .as_mut()
+            // .unwrap()
             .window()
             .set_inner_size(PhysicalSize::new(w as f32, h as f32));
         }
@@ -172,7 +159,7 @@ impl Gameboy {
         UserEvent::EmuReset => {
           let paused = self.state.flow.paused;
           self.state = GbState::new(paused);
-          self.state.init()?;
+          self.state.init(video.screen())?;
         }
         _ => {}
       },

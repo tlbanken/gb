@@ -18,6 +18,9 @@ use crate::{
   util::LazyDref,
 };
 
+pub const CLOCK_RATE: f32 = 4_194_304.0;
+pub const CLOCK_RATE_MHZ: f32 = 4.194304;
+
 type DispatchFn = fn(&mut Cpu, instr: u8) -> GbResult<()>;
 
 // flags const

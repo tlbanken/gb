@@ -1,20 +1,21 @@
 //! Debug ui for the emulator
 
 use egui::{
-  self, epaint::Shadow, Color32, Context, FullOutput, RawInput, RichText, Style, Visuals,
+  self, epaint::Shadow, Align2, Color32, Context, FullOutput, RawInput, RichText, Style, Visuals,
 };
 use egui_winit::winit::event_loop::EventLoopProxy;
 
 use crate::bus::Bus;
 use crate::dasm::Dasm;
 use crate::util::LazyDref;
-use crate::{cpu::Cpu, event::UserEvent, state::GbState};
+use crate::{cpu, cpu::Cpu, event::UserEvent, state::GbState};
 
 pub struct UiState {
   pub show_menu_bar: bool,
   pub show_cpu_reg_window: bool,
   pub show_cpu_dasm_window: bool,
   pub show_mem_window: bool,
+  pub show_stat_window: bool,
 }
 
 impl UiState {
@@ -24,6 +25,7 @@ impl UiState {
       show_cpu_reg_window: false,
       show_cpu_dasm_window: false,
       show_mem_window: false,
+      show_stat_window: false,
     }
   }
 
@@ -67,14 +69,14 @@ impl Ui {
     raw_input: RawInput,
     ui_state: &mut UiState,
     gb_state: &mut GbState,
-    fps: u32,
+    fps: f32,
   ) -> FullOutput {
     self.context.run(raw_input, |ctx| {
       self.ui(ctx, ui_state, gb_state, fps);
     })
   }
 
-  fn ui(&self, ctx: &Context, ui_state: &mut UiState, gb_state: &mut GbState, fps: u32) {
+  fn ui(&self, ctx: &Context, ui_state: &mut UiState, gb_state: &mut GbState, fps: f32) {
     // ui layout
     if ui_state.show_menu_bar {
       egui::TopBottomPanel::top(egui::Id::new("top panel")).show(ctx, |ui| {
@@ -133,9 +135,11 @@ impl Ui {
           }
           ui.monospace("  |  ");
 
-          // fps
+          // stats
           ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            ui.monospace(format!("| {:4} fps", fps));
+            if ui.button("Stats").clicked() {
+              ui_state.show_stat_window = !ui_state.show_stat_window;
+            }
             // hide menu bar
             if ui.button("Hide All").clicked() {
               ui_state.hide_all();
@@ -155,6 +159,25 @@ impl Ui {
     if ui_state.show_mem_window {
       self.ui_mem(ctx, &mut gb_state.bus.borrow_mut());
     }
+    if ui_state.show_stat_window {
+      self.ui_stat(ctx, fps, gb_state);
+    }
+  }
+
+  fn ui_stat(&self, ctx: &Context, fps: f32, gb_state: &mut GbState) {
+    egui::Window::new("Stats")
+      .resizable(false)
+      .anchor(Align2::RIGHT_TOP, [0.0, 0.0])
+      .title_bar(false)
+      .show(ctx, |ui| {
+        let clock_rate_mhz = gb_state.clock_rate / 1_000_000.0;
+        let percent = (clock_rate_mhz / cpu::CLOCK_RATE_MHZ) * 100.0;
+        ui.monospace(format!(
+          "Clock Speed: {:01.04} MHz ({:.0}%)",
+          clock_rate_mhz, percent
+        ));
+        ui.monospace(format!("UI FPS: {:.0}", fps));
+      });
   }
 
   fn ui_cpu_reg(&self, ctx: &Context, cpu: &mut Cpu) {

@@ -93,10 +93,10 @@ impl Bus {
   }
 
   /// Adds a reference to the gpu to the bus
-  pub fn connect_gpu(&mut self, gpu: Rc<RefCell<Ppu>>) -> GbResult<()> {
+  pub fn connect_ppu(&mut self, ppu: Rc<RefCell<Ppu>>) -> GbResult<()> {
     debug!("Connecting gpu to the bus");
     match self.ppu {
-      None => self.ppu = Some(gpu),
+      None => self.ppu = Some(ppu),
       Some(_) => return gb_err!(GbErrorType::AlreadyInitialized),
     }
     Ok(())
@@ -175,10 +175,7 @@ impl Bus {
       HRAM_START..=HRAM_END => self.hram.lazy_dref_mut().write(addr - HRAM_START, val),
       // unsupported
       _ => {
-        warn!(
-          "Unsupported write8 address: [{:02X}] -> ${:04x}]",
-          val, addr
-        );
+        warn!("Unsupported write8 address: [{:02X}] -> ${:04X}", val, addr);
         Ok(())
       }
     }
@@ -245,7 +242,7 @@ impl Bus {
       // unsupported
       _ => {
         warn!(
-          "Unsupported write16 address: [{:04X}] -> ${:04x}]",
+          "Unsupported write16 address: [{:04X}] -> ${:04X}",
           val, addr
         );
       }
