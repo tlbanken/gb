@@ -31,7 +31,7 @@ pub struct GbState {
   pub cpu: Rc<RefCell<Cpu>>,
   pub ppu: Rc<RefCell<Ppu>>,
   pub flow: EmuFlow,
-  pub cycle: TickCounter,
+  pub cycles: TickCounter,
   pub clock_rate: f32,
   // TODO: maybe keep event proxy for signaling gpu draws
 }
@@ -47,7 +47,7 @@ impl GbState {
       cpu: Rc::new(RefCell::new(Cpu::new())),
       ppu: Rc::new(RefCell::new(Ppu::new())),
       flow: EmuFlow::new(paused),
-      cycle: TickCounter::new(CLOCK_RATE_ALPHA),
+      cycles: TickCounter::new(CLOCK_RATE_ALPHA),
       clock_rate: 0.0,
     }
   }
@@ -73,10 +73,12 @@ impl GbState {
 
   pub fn step(&mut self) -> GbResult<()> {
     if self.flow.paused && !self.flow.step {
+      self.clock_rate = 0.0;
       return Ok(());
     }
 
     if self.flow.step {
+      self.clock_rate = 0.0;
       self.step_one()?;
     } else {
       self.step_chunk()?;
@@ -88,33 +90,31 @@ impl GbState {
 
   fn step_chunk(&mut self) -> GbResult<()> {
     // if we are running too fast, skip
-    let clock_rate = self.cycle.tps() * 4.0;
+    let clock_rate = self.cycles.tps() * 4.0;
     if clock_rate > cpu::CLOCK_RATE {
       return Ok(());
     }
     // only show clock rate when we are doing work
     self.clock_rate = clock_rate;
 
-    // 70,224 clocks to draw a complete screen.
-    // instructions about 4 clocks on average
-    // 256 rows (including hidden rows)
-    // so num instrs per row is 70,224 / 4 / 256
-    const INSTR_PER_ROW: u32 = 68;
-    let mut cpu = self.cpu.borrow_mut();
-    for _ in 0..INSTR_PER_ROW {
-      cpu.step()?;
-      self.cycle.tick();
+    // how many steps in a chunk
+    const CHUNK_SIZE: u32 = 80;
+
+    for _ in 0..CHUNK_SIZE {
+      self.step_one()?;
     }
-    // TODO: step ppu
 
     Ok(())
   }
 
+  #[inline]
   fn step_one(&mut self) -> GbResult<()> {
-    // TODO
-    self.clock_rate = 0.0;
     self.cpu.borrow_mut().step()?;
-    self.cycle.tick();
+    self.cycles.tick();
+    // 4 ppu steps per cpu step
+    for _ in 0..4 {
+      self.ppu.borrow_mut().step()?;
+    }
     Ok(())
   }
 }

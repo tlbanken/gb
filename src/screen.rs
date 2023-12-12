@@ -3,7 +3,7 @@
 use egui_wgpu::wgpu;
 use egui_wgpu::wgpu::util::DeviceExt;
 
-const GB_RESOLUTION: Resolution = Resolution {
+pub const GB_RESOLUTION: Resolution = Resolution {
   width: 160,
   height: 144,
 };

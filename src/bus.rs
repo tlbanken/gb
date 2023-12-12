@@ -14,25 +14,25 @@ use crate::{
   util::LazyDref,
 };
 
-const CART_START: u16 = 0x0000;
-const CART_END: u16 = 0x7fff;
-const PPU_START: u16 = 0x8000;
-const PPU_END: u16 = 0x9fff;
-const PPU_IO_START: u16 = 0xff40;
-const PPU_IO_END: u16 = 0xff4b;
-const ERAM_START: u16 = 0xa000;
-const ERAM_END: u16 = 0xbfff;
-const WRAM_START: u16 = 0xc000;
-const WRAM_END: u16 = 0xdfff;
-const TIMER_START: u16 = 0xff04;
-const TIMER_END: u16 = 0xff07;
-const JOYPAD_EXACT: u16 = 0xff00;
-const SERIAL_START: u16 = 0xff01;
-const SERIAL_END: u16 = 0xff02;
-const AUDIO_START: u16 = 0xff10;
-const AUDIO_END: u16 = 0xff3f;
-const HRAM_START: u16 = 0xff80;
-const HRAM_END: u16 = 0xfffe;
+pub const CART_START: u16 = 0x0000;
+pub const CART_END: u16 = 0x7fff;
+pub const PPU_START: u16 = 0x8000;
+pub const PPU_END: u16 = 0x9fff;
+pub const PPU_IO_START: u16 = 0xff40;
+pub const PPU_IO_END: u16 = 0xff4b;
+pub const ERAM_START: u16 = 0xa000;
+pub const ERAM_END: u16 = 0xbfff;
+pub const WRAM_START: u16 = 0xc000;
+pub const WRAM_END: u16 = 0xdfff;
+pub const TIMER_START: u16 = 0xff04;
+pub const TIMER_END: u16 = 0xff07;
+pub const JOYPAD_EXACT: u16 = 0xff00;
+pub const SERIAL_START: u16 = 0xff01;
+pub const SERIAL_END: u16 = 0xff02;
+pub const AUDIO_START: u16 = 0xff10;
+pub const AUDIO_END: u16 = 0xff3f;
+pub const HRAM_START: u16 = 0xff80;
+pub const HRAM_END: u16 = 0xfffe;
 pub struct Bus {
   wram: Option<Rc<RefCell<Ram>>>,
   eram: Option<Rc<RefCell<Ram>>>,

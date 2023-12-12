@@ -7,6 +7,7 @@ use egui_winit::winit::event_loop::EventLoopProxy;
 
 use crate::bus::Bus;
 use crate::dasm::Dasm;
+use crate::ppu::Ppu;
 use crate::util::LazyDref;
 use crate::{cpu, cpu::Cpu, event::UserEvent, state::GbState};
 
@@ -16,6 +17,7 @@ pub struct UiState {
   pub show_cpu_dasm_window: bool,
   pub show_mem_window: bool,
   pub show_stat_window: bool,
+  pub show_ppu_reg_window: bool,
 }
 
 impl UiState {
@@ -26,6 +28,7 @@ impl UiState {
       show_cpu_dasm_window: false,
       show_mem_window: false,
       show_stat_window: false,
+      show_ppu_reg_window: false,
     }
   }
 
@@ -41,18 +44,10 @@ pub struct Ui {
 
 impl Ui {
   pub fn new(event_loop_proxy: EventLoopProxy<UserEvent>) -> Self {
-    let context = Context::default();
+    let mut context = Context::default();
 
     // remove shadows
-    context.set_style(Style {
-      visuals: Visuals {
-        window_shadow: Shadow::NONE,
-        panel_fill: egui::Color32::BLACK.gamma_multiply(0.85),
-        window_fill: egui::Color32::BLACK.gamma_multiply(0.95),
-        ..Default::default()
-      },
-      ..Default::default()
-    });
+    Self::set_default_style(&context);
 
     Self {
       context,
@@ -94,6 +89,13 @@ impl Ui {
               // disassembly
               if ui.button("Disassembly").clicked() {
                 ui_state.show_cpu_dasm_window = !ui_state.show_cpu_dasm_window;
+                ui.close_menu();
+              }
+            });
+            ui.menu_button("PPU", |ui| {
+              // registers
+              if ui.button("Registers").clicked() {
+                ui_state.show_ppu_reg_window = !ui_state.show_ppu_reg_window;
                 ui.close_menu();
               }
             });
@@ -162,14 +164,22 @@ impl Ui {
     if ui_state.show_stat_window {
       self.ui_stat(ctx, fps, gb_state);
     }
+    if ui_state.show_ppu_reg_window {
+      self.ui_ppu_reg(ctx, &mut gb_state.ppu.borrow_mut());
+    }
   }
 
   fn ui_stat(&self, ctx: &Context, fps: f32, gb_state: &mut GbState) {
+    ctx.style_mut(|style| {
+      style.visuals.window_fill = Color32::BLACK.gamma_multiply(0.50);
+      style.visuals.window_stroke = egui::Stroke::new(0.0, Color32::TRANSPARENT);
+    });
     egui::Window::new("Stats")
       .resizable(false)
       .anchor(Align2::RIGHT_TOP, [0.0, 0.0])
       .title_bar(false)
       .show(ctx, |ui| {
+        ui.visuals_mut().override_text_color = Some(Color32::YELLOW);
         let clock_rate_mhz = gb_state.clock_rate / 1_000_000.0;
         let percent = (clock_rate_mhz / cpu::CLOCK_RATE_MHZ) * 100.0;
         ui.monospace(format!(
@@ -178,6 +188,9 @@ impl Ui {
         ));
         ui.monospace(format!("UI FPS: {:.0}", fps));
       });
+
+    // reset style
+    Self::set_default_style(ctx);
   }
 
   fn ui_cpu_reg(&self, ctx: &Context, cpu: &mut Cpu) {
@@ -246,6 +259,14 @@ impl Ui {
         break output;
       }
     }
+  }
+
+  fn ui_ppu_reg(&self, ctx: &Context, ppu: &mut Ppu) {
+    egui::Window::new("PPU Registers").show(ctx, |ui| {
+      ui.monospace(format!("LY: {}", ppu.ly));
+      ui.monospace(format!("SCX: {}", ppu.scx));
+      ui.monospace(format!("SCY: {}", ppu.scy));
+    });
   }
 
   fn ui_mem(&self, ctx: &Context, bus: &mut Bus) {
@@ -334,6 +355,18 @@ impl Ui {
           .unwrap();
         ui.close_menu();
       }
+    });
+  }
+
+  fn set_default_style(ctx: &Context) {
+    ctx.set_style(Style {
+      visuals: Visuals {
+        window_shadow: Shadow::NONE,
+        panel_fill: egui::Color32::BLACK.gamma_multiply(0.85),
+        window_fill: egui::Color32::BLACK.gamma_multiply(0.95),
+        ..Default::default()
+      },
+      ..Default::default()
     });
   }
 }
