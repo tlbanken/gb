@@ -4,8 +4,10 @@ use crate::err::{GbError, GbErrorType, GbResult};
 use crate::screen::{Pos, Screen};
 use crate::util::LazyDref;
 use crate::{bus, gb_err, screen};
+use bit_field::BitField;
 use log::{trace, warn};
 use std::cell::RefCell;
+use std::ops::Range;
 use std::rc::Rc;
 
 const LCDC_ADDR: u16 = 0xff40;
@@ -45,57 +47,52 @@ const PALETTE_GREEN: [screen::Color; 4] = [
   screen::Color::new(15.0 / 255.0, 56.0 / 255.0, 15.0 / 255.0),   // black
 ];
 
-/// LCD Control register
-struct LcdControl {
-  /// raw byte for faster reads
-  pub raw: u8,
+// LCD Control register
+/// bit 0: 0 = Off; 1 = On
+const LCDC_BG_WIN_ENABLE: u8 = 0;
+/// bit 1: 0 = Off; 1 = On
+const LCDC_OBJ_ENABLED: u8 = 1;
+/// bit 2: 0 = 8×8; 1 = 8×16
+const LCDC_OBJ_SIZE_LARGE: u8 = 2;
+/// bit 3: 0 = 9800–9BFF; 1 = 9C00–9FFF
+const LCDC_TILE_MAP_HI: u8 = 3;
+/// bit 4: 0 = 8800–97FF; 1 = 8000–8FFF
+const LCDC_WIN_BG_DATA_MAP_LO: u8 = 4;
+/// bit 5: 0 = Off; 1 = On
+const LCDC_WIN_ENABLED: u8 = 5;
+/// bit 6: 0 = 9800–9BFF; 1 = 9C00–9FFF
+const LCDC_WIN_TILE_MAP_HI: u8 = 6;
+/// bit 7: 0 = Off; 1 = On
+const LCDC_PPU_ENABLED: u8 = 7;
 
-  /// bit 0: 0 = Off; 1 = On
-  pub bg_win_enabled: bool,
-  /// bit 1: 0 = Off; 1 = On
-  pub obj_enabled: bool,
-  /// bit 2: 0 = 8×8; 1 = 8×16
-  pub large_obj_size: bool,
-  /// bit 3: 0 = 9800–9BFF; 1 = 9C00–9FFF
-  pub bg_tile_map_hi: bool,
-  /// bit 4: 0 = 8800–97FF; 1 = 8000–8FFF
-  pub win_bg_data_map_lo: bool,
-  /// bit 5: 0 = Off; 1 = On
-  pub window_enabled: bool,
-  /// bit 6: 0 = 9800–9BFF; 1 = 9C00–9FFF
-  pub window_tile_map_hi: bool,
-  /// bit 7: 0 = Off; 1 = On
-  pub lcd_ppu_enabled: bool,
-}
+// LCD Status Register
+#[rustfmt::skip]
+/// Bit 0-1: PPU mode (Read-only)
+///
+/// Mode | Action                                     | Duration                             | Accessible video memory
+/// -----|--------------------------------------------|--------------------------------------|-------------------------
+///   2  | Searching for OBJs which overlap this line | 80 dots                              | VRAM, CGB palettes
+///   3  | Sending pixels to the LCD                  | Between 172 and 289 dots, see below  | None
+///   0  | Waiting until the end of the scanline      | 376 - mode 3's duration              | VRAM, OAM, CGB palettes
+///   1  | Waiting until the next frame               | 4560 dots (10 scanlines)             | VRAM, OAM, CGB palettes
+const STAT_PPU_MODE: Range<usize> = 0..2;
+/// Bit 2: LYC == LY (Read-only): Set when LY contains the same value as LYC;
+/// it is constantly updated
+const STAT_LYC_EQ_LY: u8 = 2;
+/// Bit 3: Mode 0 int select (Read/Write): If set, selects the Mode 0
+/// condition
+const STAT_MODE0_INT_SELECT: u8 = 3;
+/// Bit 4: Mode 1 int select (Read/Write): If set, selects the Mode 1
+/// condition
+const STAT_MODE1_INT_SELECT: u8 = 4;
+/// Bit 5: Mode 2 int select (Read/Write): If set, selects the Mode 2
+/// condition
+const STAT_MODE2_INT_SELECT: u8 = 5;
+/// Bit 6: LYC int select (Read/Write): If set, selects the LYC == LY
+/// condition
+const STAT_LYC_INT_SELECT: u8 = 6;
 
-impl LcdControl {
-  pub fn new() -> LcdControl {
-    LcdControl {
-      raw: 0,
-      bg_win_enabled: false,
-      obj_enabled: false,
-      large_obj_size: false,
-      bg_tile_map_hi: false,
-      win_bg_data_map_lo: false,
-      window_enabled: false,
-      window_tile_map_hi: false,
-      lcd_ppu_enabled: false,
-    }
-  }
-
-  pub fn write(&mut self, byte: u8) {
-    self.raw = byte;
-    self.bg_win_enabled = (byte >> 0) & 0x1 > 0;
-    self.obj_enabled = (byte >> 1) & 0x1 > 0;
-    self.large_obj_size = (byte >> 2) & 0x1 > 0;
-    self.bg_tile_map_hi = (byte >> 3) & 0x1 > 0;
-    self.win_bg_data_map_lo = (byte >> 4) & 0x1 > 0;
-    self.window_enabled = (byte >> 5) & 0x1 > 0;
-    self.window_tile_map_hi = (byte >> 6) & 0x1 > 0;
-    self.lcd_ppu_enabled = (byte >> 7) & 0x1 > 0;
-  }
-}
-
+#[derive(PartialEq)]
 enum PpuMode {
   HBlank = 0,
   VBlank = 1,
@@ -103,76 +100,16 @@ enum PpuMode {
   Rendering = 3,
 }
 
-/// LCD Status Register
-struct LcdStatus {
-  /// Raw Byte for faster reads
-  pub raw: u8,
-
-  #[rustfmt::skip]
-  /// Bit 0-1: PPU mode (Read-only)
-  /// 
-  /// Mode | Action                                     | Duration                             | Accessible video memory
-  /// -----|--------------------------------------------|--------------------------------------|-------------------------
-  ///   2  | Searching for OBJs which overlap this line | 80 dots                              | VRAM, CGB palettes
-  ///   3  | Sending pixels to the LCD                  | Between 172 and 289 dots, see below  | None
-  ///   0  | Waiting until the end of the scanline      | 376 - mode 3's duration              | VRAM, OAM, CGB palettes
-  ///   1  | Waiting until the next frame               | 4560 dots (10 scanlines)             | VRAM, OAM, CGB palettes
-  pub ppu_mode: u8,
-
-  /// Bit 2: LYC == LY (Read-only): Set when LY contains the same value as LYC;
-  /// it is constantly updated
-  pub lyc_eq_ly: bool,
-
-  /// Bit 3: Mode 0 int select (Read/Write): If set, selects the Mode 0
-  /// condition
-  pub mode0_int_select: bool,
-
-  /// Bit 4: Mode 1 int select (Read/Write): If set, selects the Mode 1
-  /// condition
-  pub mode1_int_select: bool,
-
-  /// Bit 5: Mode 2 int select (Read/Write): If set, selects the Mode 2
-  /// condition
-  pub mode2_int_select: bool,
-
-  /// Bit 6: LYC int select (Read/Write): If set, selects the LYC == LY
-  /// condition
-  pub lyc_int_select: bool,
-}
-
-impl LcdStatus {
-  pub fn new() -> LcdStatus {
-    LcdStatus {
-      raw: 0,
-      ppu_mode: PpuMode::Rendering as u8,
-      lyc_eq_ly: false,
-      mode0_int_select: false,
-      mode1_int_select: false,
-      mode2_int_select: false,
-      lyc_int_select: false,
-    }
-  }
-
-  pub fn write(&mut self, byte: u8) {
-    // mask ppu_mode and lyc_eq_ly since these are read-only
-    self.raw = byte & 0xfc;
-    self.mode0_int_select = (byte >> 3) & 0x1 > 0;
-    self.mode1_int_select = (byte >> 4) & 0x1 > 0;
-    self.mode2_int_select = (byte >> 5) & 0x1 > 0;
-    self.lyc_int_select = (byte >> 6) & 0x1 > 0;
-  }
-}
-
 pub struct Ppu {
   pub vram: Vec<u8>,
   /// lcd control register
-  pub lcdc: LcdControl,
+  pub lcdc: u8,
   /// LCD y coord ranged from 0-153 (read-only)
   pub ly: u8,
   /// LCD Y value to compare against
   pub lyc: u8,
   /// LCD Status register
-  pub stat: LcdStatus,
+  pub stat: u8,
   /// Background palette index mapping
   pub bgp: u8,
   /// Scroll X
@@ -196,10 +133,14 @@ pub struct Ppu {
 
 impl Ppu {
   pub fn new() -> Ppu {
+    // start in rendering mode
+    let mut stat = 0;
+    stat.set_bits(STAT_PPU_MODE, PpuMode::Rendering as u8);
+
     Ppu {
       vram: vec![0; VRAM_SIZE],
-      lcdc: LcdControl::new(),
-      stat: LcdStatus::new(),
+      lcdc: 0,
+      stat,
       ly: 0,
       lyc: 0,
       bgp: 0,
@@ -222,10 +163,8 @@ impl Ppu {
   }
 
   pub fn step(&mut self) -> GbResult<()> {
-    // TODO: if we are in VBLANK or HBLANK, skip
-    // TODO: update mode
-
-    if self.stat.ppu_mode == PpuMode::Rendering as u8 {
+    // only draw when we need to
+    if self.ppu_mode() == PpuMode::Rendering {
       // our pixel coordinate needs to be adjusted for scrolling
       let pos = self.pos_with_scroll();
       trace!("Adjusted Pos: {:?}", pos);
@@ -267,8 +206,8 @@ impl Ppu {
 
   pub fn io_read(&self, addr: u16) -> GbResult<u8> {
     match addr {
-      LCDC_ADDR => Ok(self.lcdc.raw),
-      STAT_ADDR => Ok(self.stat.raw),
+      LCDC_ADDR => Ok(self.lcdc),
+      STAT_ADDR => Ok(self.stat),
       LY_ADDR => Ok(self.ly),
       LYC_ADDR => Ok(self.lyc),
       BGP_ADDR => Ok(self.bgp),
@@ -283,8 +222,8 @@ impl Ppu {
 
   pub fn io_write(&mut self, addr: u16, data: u8) -> GbResult<()> {
     match addr {
-      LCDC_ADDR => self.lcdc.write(data),
-      STAT_ADDR => self.stat.write(data),
+      LCDC_ADDR => self.lcdc = data,
+      STAT_ADDR => self.stat = data,
       LYC_ADDR => self.lyc = data,
       BGP_ADDR => self.bgp = data,
       SCY_ADDR => self.scy = data,
@@ -332,7 +271,6 @@ impl Ppu {
   }
 
   fn pos_with_scroll(&self) -> screen::Pos {
-    // TODO: offset with scroll x and scroll y
     // self.pos
     Pos {
       x: (self.pos.x + self.scx as u32) % 256,
@@ -341,47 +279,53 @@ impl Ppu {
   }
 
   fn update_pos(&mut self) {
-    // TODO: Redo all this logic
-    self.pos.x = (self.pos.x + 1) % SCREEN_WIDTH as u32;
-    if self.stat.ppu_mode != PpuMode::VBlank as u8 {
-      self.pos.y = if self.pos.x == 0 {
-        self.pos.y + 1
-      } else {
-        self.pos.y
-      };
-      self.ly = self.pos.y as u8;
-      if self.ly == SCREEN_HEIGHT {
-        self.stat.ppu_mode = PpuMode::VBlank as u8;
-      }
-    } else if self.stat.ppu_mode == PpuMode::VBlank as u8 {
-      // TODO: Set VBLANK Status
-      // we entered the vblank
-      self.ly = if self.pos.x == 0 {
-        self.ly + 1
-      } else {
-        self.ly
-      };
-      if self.ly == 154 {
-        // done with vblank
-        // TODO: Set correct mode
-        self.stat.ppu_mode = PpuMode::Rendering as u8;
-        // reset positions
-        self.ly = 0;
-        self.pos.x = 0;
-        self.pos.y = 0;
+    const HBLANK_START: u32 = 160;
+    const HBLANK_END: u32 = 360; // TODO what is the correct value here?
+    const VBLANK_START: u32 = 144;
+    const VBLANK_END: u32 = 154 + 1;
+
+    // always advance x
+    self.pos.x += 1;
+
+    if self.pos.x == HBLANK_START {
+      if self.ppu_mode() != PpuMode::VBlank {
+        self.set_ppu_mode(PpuMode::HBlank);
       }
     }
-    // TODO: Set hblank and OAM Scan
+    if self.pos.x == HBLANK_END {
+      // reset x position and start rendering again if not in vblank
+      self.pos.x = 0;
+      if self.ppu_mode() != PpuMode::VBlank {
+        self.set_ppu_mode(PpuMode::Rendering);
+      }
+    }
+    if self.pos.x == 0 {
+      // new row
+      self.pos.y += 1;
+    }
+    if self.pos.y == VBLANK_START {
+      self.set_ppu_mode(PpuMode::VBlank);
+    }
+    if self.pos.y == VBLANK_END {
+      self.pos.y = 0;
+      self.set_ppu_mode(PpuMode::Rendering);
+    }
+    self.ly = self.pos.y as u8;
     // TODO: Trigger interrupt on lyc compare
   }
 
-  // fn should_render(&mut self) -> bool {
-  //   if self.hblank_left > 0 {
-  //     self.hblank_left -= 1;
-  //     return false;
-  //   }
-  //   // TODO: OAM Scan
-  //   // TODO: reset mode
-  //   return true;
-  // }
+  fn ppu_mode(&self) -> PpuMode {
+    match self.stat.get_bits(STAT_PPU_MODE) {
+      mode if mode == PpuMode::Rendering as u8 => PpuMode::Rendering,
+      mode if mode == PpuMode::VBlank as u8 => PpuMode::VBlank,
+      mode if mode == PpuMode::HBlank as u8 => PpuMode::HBlank,
+      mode if mode == PpuMode::OamScan as u8 => PpuMode::OamScan,
+      // shouldn't be possible
+      _ => panic!("Unknown Ppu Mode!"),
+    }
+  }
+
+  fn set_ppu_mode(&mut self, mode: PpuMode) {
+    self.stat.set_bits(STAT_PPU_MODE, mode as u8);
+  }
 }
