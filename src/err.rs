@@ -31,4 +31,5 @@ pub enum GbErrorType {
   AlreadyInitialized,
   OutOfBounds,
   InvalidCpuInstruction,
+  FileError,
 }

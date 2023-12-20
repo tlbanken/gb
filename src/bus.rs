@@ -16,6 +16,8 @@ use crate::{
 
 pub const CART_START: u16 = 0x0000;
 pub const CART_END: u16 = 0x7fff;
+pub const CART_IO_START: u16 = 0xff50;
+pub const CART_IO_END: u16 = 0xff50;
 pub const PPU_START: u16 = 0x8000;
 pub const PPU_END: u16 = 0x9fff;
 pub const PPU_IO_START: u16 = 0xff40;
@@ -109,6 +111,7 @@ impl Bus {
     // read with relative addressing
     match addr {
       CART_START..=CART_END => self.cart.lazy_dref().read(addr - CART_START),
+      CART_IO_START..=CART_IO_END => self.cart.lazy_dref().io_read(addr),
       PPU_START..=PPU_END => self.ppu.lazy_dref().read(addr - PPU_START),
       PPU_IO_START..=PPU_IO_END => self.ppu.lazy_dref().io_read(addr),
       ERAM_START..=ERAM_END => self.eram.lazy_dref().read(addr - ERAM_START),
@@ -131,6 +134,10 @@ impl Bus {
       CART_START..=CART_END => u16::from_le_bytes([
         self.cart.lazy_dref().read(addr - CART_START)?,
         self.cart.lazy_dref().read(addr - CART_START + 1)?,
+      ]),
+      CART_IO_START..=CART_IO_END => u16::from_le_bytes([
+        self.cart.lazy_dref().io_read(addr)?,
+        self.cart.lazy_dref().io_read(addr + 1)?,
       ]),
       PPU_START..=PPU_END => u16::from_le_bytes([
         self.ppu.lazy_dref().read(addr - PPU_START)?,
@@ -168,6 +175,7 @@ impl Bus {
     // write with relative addressing
     match addr {
       CART_START..=CART_END => self.cart.lazy_dref_mut().write(addr - CART_START, val),
+      CART_IO_START..=CART_IO_END => self.cart.lazy_dref_mut().io_write(addr, val),
       PPU_START..=PPU_END => self.ppu.lazy_dref_mut().write(addr - PPU_START, val),
       PPU_IO_START..=PPU_IO_END => self.ppu.lazy_dref_mut().io_write(addr, val),
       ERAM_START..=ERAM_END => self.eram.lazy_dref_mut().write(addr - ERAM_START, val),
@@ -197,6 +205,10 @@ impl Bus {
           .cart
           .lazy_dref_mut()
           .write(addr - CART_START + 1, bytes[1])?;
+      }
+      CART_IO_START..=CART_IO_END => {
+        self.cart.lazy_dref_mut().io_write(addr, bytes[0])?;
+        self.cart.lazy_dref_mut().io_write(addr + 1, bytes[1])?;
       }
       PPU_START..=PPU_END => {
         self.ppu.lazy_dref_mut().write(addr - PPU_START, bytes[0])?;

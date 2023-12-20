@@ -106,7 +106,8 @@ impl Ui {
           });
 
           if ui.button("Load Cartridge").clicked() {
-            todo!("load cartridge")
+            let cart_path = "test-roms/cpu_instrs/cpu_instrs.gb";
+            gb_state.cart.borrow_mut().load(cart_path).unwrap();
           }
 
           // control flow buttons

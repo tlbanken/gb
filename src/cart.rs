@@ -1,6 +1,10 @@
 //! Cartridge logic for the gb emulator.
 
-use crate::err::GbResult;
+use crate::err::{GbError, GbErrorType, GbResult};
+use crate::gb_err;
+use log::{error, info};
+use std::fs;
+use std::path::Path;
 
 // raw dump of the DMG boot rom. This is loaded into addresses 0x00..=0xff until
 // the rom writes to the BANK register at 0xff50
@@ -23,8 +27,16 @@ const BOOT_ROM: [u8; 256] = [
   0xf5, 0x06, 0x19, 0x78, 0x86, 0x23, 0x05, 0x20, 0xfb, 0x86, 0x20, 0xfe, 0x3e, 0x01, 0xe0, 0x50,
 ];
 
+const BOOT_ROM_START: u16 = 0x0000;
+const BOOT_ROM_END: u16 = 0x00ff;
+
+pub struct Header {
+  // TODO
+}
+
 pub struct Cartridge {
-  rom: Vec<u8>,
+  data: Vec<u8>,
+  header: Option<Header>,
   loaded: bool,
   boot_mode: bool,
 }
@@ -32,31 +44,49 @@ pub struct Cartridge {
 impl Cartridge {
   pub fn new() -> Cartridge {
     Cartridge {
-      rom: Vec::new(),
+      data: Vec::new(),
+      header: None,
       loaded: false,
       boot_mode: true,
     }
   }
 
-  pub fn load(&mut self, path: &String) -> GbResult<()> {
+  pub fn load(&mut self, path: &str) -> GbResult<()> {
     self.loaded = true;
-    todo!("Implement cartridge loading from file")
+    let path = Path::new(path);
+    self.data = match fs::read(path) {
+      Ok(data) => data,
+      Err(why) => {
+        error!("Failed to load {}: {}", path.display(), why);
+        return gb_err!(GbErrorType::FileError);
+      }
+    };
+    info!("Loaded {}", path.display());
+    self.read_header();
+    Ok(())
+  }
+
+  pub fn unload(&mut self) -> GbResult<()> {
+    self.loaded = false;
+    // reset banks
+    self.boot_mode = true;
+    self.data.clear();
+    // TODO: maybe easier to just send a reset signal?
+    Ok(())
   }
 
   pub fn read(&self, addr: u16) -> GbResult<u8> {
     Ok(match addr {
-      0x0000..=0x00ff => {
+      BOOT_ROM_START..=BOOT_ROM_END => {
         if self.boot_mode {
           BOOT_ROM[addr as usize]
         } else {
-          self.rom[addr as usize]
+          self.data[addr as usize]
         }
       }
-      // BANK register to switch out of boot mode
-      0xff50 => unimplemented!(),
       _ => {
         if self.loaded {
-          self.rom[addr as usize]
+          self.data[addr as usize]
         } else {
           // when no cartridge loaded, returns 0xff
           0xff
@@ -67,17 +97,11 @@ impl Cartridge {
 
   pub fn write(&mut self, addr: u16, val: u8) -> GbResult<()> {
     match addr {
-      0x0000..=0x00ff => {
+      BOOT_ROM_START..=BOOT_ROM_END => {
         if self.boot_mode {
           unimplemented!()
         } else {
           unimplemented!()
-        }
-      }
-      // BANK register to switch out of boot mode
-      0xff50 => {
-        if val > 0 {
-          self.boot_mode = false;
         }
       }
       _ => {
@@ -90,5 +114,24 @@ impl Cartridge {
       }
     }
     Ok(())
+  }
+
+  pub fn io_read(&self, addr: u16) -> GbResult<u8> {
+    match addr {
+      0xff50 => Ok(self.boot_mode as u8),
+      _ => gb_err!(GbErrorType::OutOfBounds),
+    }
+  }
+
+  pub fn io_write(&mut self, addr: u16, data: u8) -> GbResult<()> {
+    match addr {
+      0xff50 => self.boot_mode = data > 0,
+      _ => return gb_err!(GbErrorType::OutOfBounds),
+    }
+    Ok(())
+  }
+
+  fn read_header(&mut self) {
+    // TODO
   }
 }
