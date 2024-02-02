@@ -2,10 +2,12 @@
 
 use std::{cell::RefCell, rc::Rc};
 
+use crate::int::Interrupts;
 use crate::screen::Screen;
 use crate::tick_counter::TickCounter;
 use crate::{bus::Bus, cart::Cartridge, cpu, cpu::Cpu, err::GbResult, ppu::Ppu, ram::Ram};
 
+/// Alpha used when calculating the rolling average
 const CLOCK_RATE_ALPHA: f32 = 0.999;
 
 pub struct EmuFlow {
@@ -30,6 +32,7 @@ pub struct GbState {
   pub cart: Rc<RefCell<Cartridge>>,
   pub cpu: Rc<RefCell<Cpu>>,
   pub ppu: Rc<RefCell<Ppu>>,
+  pub ic: Rc<RefCell<Interrupts>>,
   pub flow: EmuFlow,
   pub cycles: TickCounter,
   pub clock_rate: f32,
@@ -46,6 +49,7 @@ impl GbState {
       cart: Rc::new(RefCell::new(Cartridge::new())),
       cpu: Rc::new(RefCell::new(Cpu::new())),
       ppu: Rc::new(RefCell::new(Ppu::new())),
+      ic: Rc::new(RefCell::new(Interrupts::new())),
       flow: EmuFlow::new(paused),
       cycles: TickCounter::new(CLOCK_RATE_ALPHA),
       clock_rate: 0.0,
@@ -57,6 +61,9 @@ impl GbState {
 
     // connect PPU to screen
     self.ppu.borrow_mut().connect_screen(screen)?;
+
+    // connect interrupts to cpu
+    self.ic.borrow_mut().connect_cpu(self.cpu.clone())?;
 
     // connect Bus to memory
     self.bus.borrow_mut().connect_eram(self.eram.clone())?;
@@ -115,6 +122,7 @@ impl GbState {
     for _ in 0..4 {
       self.ppu.borrow_mut().step()?;
     }
+    self.ic.borrow_mut().step();
     Ok(())
   }
 }

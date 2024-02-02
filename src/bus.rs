@@ -3,7 +3,7 @@
 
 use std::{cell::RefCell, rc::Rc};
 
-use log::{debug, info, trace, warn};
+use log::{debug, trace, warn};
 
 use crate::{
   cart::Cartridge,
@@ -106,7 +106,7 @@ impl Bus {
 
   pub fn read8(&self, addr: u16) -> GbResult<u8> {
     #[cfg(debug_assertions)]
-    trace!("READ8 ${:04x}", addr);
+    trace!("READ8 ${:04X}", addr);
 
     // read with relative addressing
     match addr {
@@ -119,7 +119,7 @@ impl Bus {
       HRAM_START..=HRAM_END => self.hram.lazy_dref().read(addr - HRAM_START),
       // unsupported
       _ => {
-        warn!("Unsupported read8 address: ${:04x}. Returning 0", addr);
+        warn!("Unsupported read8 address: ${:04X}. Returning 0", addr);
         Ok(0)
       }
     }
@@ -127,7 +127,7 @@ impl Bus {
 
   pub fn read16(&self, addr: u16) -> GbResult<u16> {
     #[cfg(debug_assertions)]
-    trace!("READ16 ${:04x}", addr);
+    trace!("READ16 ${:04X}", addr);
 
     // read with relative addressing
     Ok(match addr {
@@ -162,7 +162,7 @@ impl Bus {
 
       // unsupported
       _ => {
-        warn!("Unsupported read16 address: ${:04x}. Returning 0", addr);
+        warn!("Unsupported read16 address: ${:04X}. Returning 0", addr);
         0
       }
     })

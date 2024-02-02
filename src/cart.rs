@@ -4,7 +4,7 @@ use crate::err::{GbError, GbErrorType, GbResult};
 use crate::gb_err;
 use log::{error, info};
 use std::fs;
-use std::path::Path;
+use std::path::PathBuf;
 
 // raw dump of the DMG boot rom. This is loaded into addresses 0x00..=0xff until
 // the rom writes to the BANK register at 0xff50
@@ -35,6 +35,7 @@ pub struct Header {
 }
 
 pub struct Cartridge {
+  path: PathBuf,
   data: Vec<u8>,
   header: Option<Header>,
   loaded: bool,
@@ -44,6 +45,7 @@ pub struct Cartridge {
 impl Cartridge {
   pub fn new() -> Cartridge {
     Cartridge {
+      path: PathBuf::new(),
       data: Vec::new(),
       header: None,
       loaded: false,
@@ -51,17 +53,17 @@ impl Cartridge {
     }
   }
 
-  pub fn load(&mut self, path: &str) -> GbResult<()> {
+  pub fn load(&mut self, path: PathBuf) -> GbResult<()> {
     self.loaded = true;
-    let path = Path::new(path);
-    self.data = match fs::read(path) {
+    self.data = match fs::read(path.clone()) {
       Ok(data) => data,
       Err(why) => {
         error!("Failed to load {}: {}", path.display(), why);
         return gb_err!(GbErrorType::FileError);
       }
     };
-    info!("Loaded {}", path.display());
+    self.path = path.clone();
+    info!("Loaded {}", self.path.display());
     self.read_header();
     Ok(())
   }
@@ -73,6 +75,14 @@ impl Cartridge {
     self.data.clear();
     // TODO: maybe easier to just send a reset signal?
     Ok(())
+  }
+
+  pub fn cart_path(&self) -> Option<PathBuf> {
+    if self.loaded {
+      Some(self.path.clone())
+    } else {
+      None
+    }
   }
 
   pub fn read(&self, addr: u16) -> GbResult<u8> {
@@ -106,7 +116,8 @@ impl Cartridge {
       }
       _ => {
         if self.loaded {
-          unimplemented!()
+          // unimplemented!()
+          self.data[addr as usize] = val;
         } else {
           // when no cartridge loaded, returns 0xff
           unimplemented!()

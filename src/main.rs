@@ -7,6 +7,7 @@ mod dasm;
 mod err;
 mod event;
 mod gb;
+mod int;
 mod logger;
 mod ppu;
 mod ram;

@@ -32,4 +32,5 @@ pub enum GbErrorType {
   OutOfBounds,
   InvalidCpuInstruction,
   FileError,
+  BadValue,
 }

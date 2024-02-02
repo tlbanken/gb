@@ -4,6 +4,9 @@ use egui::{
   self, epaint::Shadow, Align2, Color32, Context, FullOutput, RawInput, RichText, Style, Visuals,
 };
 use egui_winit::winit::event_loop::EventLoopProxy;
+use rfd::FileDialog;
+use std::env::current_dir;
+use std::path::PathBuf;
 
 use crate::bus::Bus;
 use crate::dasm::Dasm;
@@ -106,8 +109,16 @@ impl Ui {
           });
 
           if ui.button("Load Cartridge").clicked() {
-            let cart_path = "test-roms/cpu_instrs/cpu_instrs.gb";
-            gb_state.cart.borrow_mut().load(cart_path).unwrap();
+            let mut start_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+            start_dir.push("test-roms/");
+            let file_option = FileDialog::new().set_directory(start_dir).pick_file();
+            if let Some(file) = file_option {
+              // reset to load the cartridge
+              self
+                .event_loop_proxy
+                .send_event(UserEvent::EmuReset(Some(file)))
+                .unwrap();
+            }
           }
 
           // control flow buttons
@@ -133,7 +144,7 @@ impl Ui {
           if ui.button("Reset").clicked() {
             self
               .event_loop_proxy
-              .send_event(UserEvent::EmuReset)
+              .send_event(UserEvent::EmuReset(gb_state.cart.borrow().cart_path()))
               .unwrap();
           }
           ui.monospace("  |  ");

@@ -10,6 +10,7 @@ use std::fs::File;
 use std::io::Write;
 use std::{cell::RefCell, rc::Rc};
 
+use crate::int::Interrupt;
 use crate::{
   bus::Bus,
   dasm::Dasm,
@@ -86,6 +87,8 @@ pub struct Cpu {
   pub hl: Register,
   pub sp: u16,
   pub pc: u16,
+  /// interrupt master enable register
+  pub ime: bool,
   pub bus: Option<Rc<RefCell<Bus>>>,
   pub history: InstrHistory,
   #[cfg(feature = "instr-trace")]
@@ -132,6 +135,7 @@ impl Cpu {
       hl: Register::new(),
       sp: 0,
       pc: 0,
+      ime: false,
       bus: None,
       dispatcher: Self::init_dispatcher(),
       dispatcher_cb: Self::init_dispatcher_cb(),
@@ -185,6 +189,16 @@ impl Cpu {
     self.dispatcher[instr as usize](self, instr)?;
 
     Ok(())
+  }
+
+  pub fn interrupt(&mut self, int: Interrupt) {
+    todo!()
+    // only handle interrupt if master flag enabled
+    // if self.ime {
+    //   match int {
+    //     // TODO
+    //   }
+    // }
   }
 
   #[cfg(feature = "instr-trace")]
@@ -3126,7 +3140,9 @@ impl Cpu {
   ///
   /// Flags: - - - -
   fn reti(&mut self, _instr: u8) -> GbResult<()> {
-    todo!("Implement interrupts")
+    // TODO: This should be delayed by 1 instruction?
+    self.ime = true;
+    self.ret_flag(0, false)
   }
 
   // *** Other ***
@@ -3228,7 +3244,8 @@ impl Cpu {
   ///
   /// Flags: - - - -
   fn di(&mut self, _instr: u8) -> GbResult<()> {
-    todo!("Implement interrupts")
+    self.ime = false;
+    Ok(())
   }
 
   /// EI
@@ -3237,7 +3254,9 @@ impl Cpu {
   ///
   /// Flags: - - - -
   fn ei(&mut self, _instr: u8) -> GbResult<()> {
-    todo!("Implement interrupts")
+    // TODO: this should be delayed by 1 instruction?
+    self.ime = true;
+    Ok(())
   }
 
   // *** Prefix CB ***

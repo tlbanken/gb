@@ -148,18 +148,19 @@ impl Gameboy {
       Event::UserEvent(event) => match event {
         UserEvent::RequestResize(w, h) => {
           video
-            // .as_mut()
-            // .unwrap()
             .window()
             .set_inner_size(PhysicalSize::new(w as f32, h as f32));
         }
         UserEvent::EmuPause => self.state.flow.paused = true,
         UserEvent::EmuPlay => self.state.flow.paused = false,
         UserEvent::EmuStep => self.state.flow.step = true,
-        UserEvent::EmuReset => {
+        UserEvent::EmuReset(path) => {
           let paused = self.state.flow.paused;
           self.state = GbState::new(paused);
           self.state.init(video.screen())?;
+          if let Some(path_unwrapped) = path {
+            self.state.cart.borrow_mut().load(path_unwrapped)?;
+          }
         }
         _ => {}
       },
