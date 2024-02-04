@@ -3,7 +3,7 @@
 //! MHz.
 #![allow(non_snake_case)]
 
-use log::error;
+use log::{error, warn};
 use std::collections::VecDeque;
 use std::env;
 use std::fs::File;
@@ -110,7 +110,7 @@ impl Register {
   }
 
   pub fn hilo(&self) -> u16 {
-    (self.lo as u16) | ((self.hi as u16) << 8)
+    u16::from_le_bytes([self.lo, self.hi])
   }
 
   pub fn set_u16(&mut self, val: u16) {
@@ -426,12 +426,18 @@ impl Cpu {
     Ok(())
   }
 
+  /// Enter CPU very low power mode. Also used to switch between double and
+  /// normal speed CPU modes in GBC.
   fn stop(&mut self, _instr: u8) -> GbResult<()> {
-    unimplemented!()
+    warn!("STOP instruction not implemented!");
+    Ok(())
   }
 
+  /// Enter CPU low-power consumption mode until an interrupt occurs.
   fn halt(&mut self, _instr: u8) -> GbResult<()> {
-    unimplemented!()
+    // TODO: cpu should sleep until interrupt occurs
+    warn!("HALT instruction not implemented!");
+    Ok(())
   }
 
   /// CB XX
@@ -714,7 +720,7 @@ impl Cpu {
   ///
   /// Flags: - - - -
   fn ld_b_e(&mut self, _instr: u8) -> GbResult<()> {
-    self.de.lo = self.bc.hi;
+    self.bc.hi = self.de.lo;
     Ok(())
   }
 
@@ -924,7 +930,7 @@ impl Cpu {
   ///
   /// Flags: - - - -
   fn ld_e_b(&mut self, _instr: u8) -> GbResult<()> {
-    self.bc.hi = self.de.lo;
+    self.de.lo = self.bc.hi;
     Ok(())
   }
 
@@ -934,7 +940,7 @@ impl Cpu {
   ///
   /// Flags: - - - -
   fn ld_e_c(&mut self, _instr: u8) -> GbResult<()> {
-    self.bc.lo = self.de.lo;
+    self.de.lo = self.bc.lo;
     Ok(())
   }
 
@@ -1024,7 +1030,7 @@ impl Cpu {
   ///
   /// Flags: - - - -
   fn ld_h_d(&mut self, _instr: u8) -> GbResult<()> {
-    self.de.hi = self.hl.hi;
+    self.hl.hi = self.de.hi;
     Ok(())
   }
 
@@ -1104,7 +1110,7 @@ impl Cpu {
   ///
   /// Flags: - - - -
   fn ld_l_d(&mut self, _instr: u8) -> GbResult<()> {
-    self.de.hi = self.hl.lo;
+    self.hl.lo = self.de.hi;
     Ok(())
   }
 
@@ -1114,7 +1120,7 @@ impl Cpu {
   ///
   /// Flags: - - - -
   fn ld_l_e(&mut self, _instr: u8) -> GbResult<()> {
-    self.de.lo = self.hl.lo;
+    self.hl.lo = self.de.lo;
     Ok(())
   }
 
@@ -1558,14 +1564,14 @@ impl Cpu {
     let res = a.wrapping_sub(r).wrapping_sub(carry);
 
     // check half carry
-    self.af.lo |= if ((r & 0xf) + 1) > (a & 0xf) {
+    self.af.lo |= if ((r & 0xf) + carry) > (a & 0xf) {
       FLAG_H
     } else {
       0
     };
 
     // check carry
-    self.af.lo |= if (r as u16 + 1) > (a as u16) {
+    self.af.lo |= if (r as u16 + carry as u16) > (a as u16) {
       FLAG_C
     } else {
       0
@@ -2281,6 +2287,7 @@ impl Cpu {
   ///
   /// Flags: Z 1 H C
   fn sbc_a__hl_(&mut self, _instr: u8) -> GbResult<()> {
+    // TODO: this is broken?
     let val = self.bus.lazy_dref().read8(self.hl.hilo())?;
     self.sbc_r(val);
     Ok(())
@@ -2302,6 +2309,7 @@ impl Cpu {
   ///
   /// Flags: Z 1 H C
   fn sbc_a_d8(&mut self, _instr: u8) -> GbResult<()> {
+    // TODO: this is broken?
     let d8 = self.get_imm8()?;
     self.sbc_r(d8);
     Ok(())
@@ -2763,7 +2771,39 @@ impl Cpu {
   ///
   /// Flags: Z - 0 C
   fn daa(&mut self, _instr: u8) -> GbResult<()> {
-    todo!("what is DAA?")
+    // decimal adjust logic for the gameboy cpu taken from
+    // https://forums.nesdev.org/viewtopic.php?p=196282&sid=84ae40d1166afc4bda3ff926f30c2d24#p196282
+
+    let cflag_set = self.af.lo & FLAG_C > 0;
+    let nflag_set = self.af.lo & FLAG_N > 0;
+    let hflag_set = self.af.lo & FLAG_H > 0;
+    if !nflag_set {
+      // adjustment after addition
+      // adjust if (half)carry occurred or if result is out of bounds
+      if cflag_set || self.af.hi > 0x99 {
+        self.af.hi = self.af.hi.wrapping_add(0x60);
+        self.af.lo |= FLAG_C;
+      }
+      if hflag_set || (self.af.hi & 0x0f) > 0x09 {
+        self.af.hi = self.af.hi.wrapping_add(0x06);
+      }
+    } else {
+      // adjustment after subtraction
+      if cflag_set {
+        self.af.hi = self.af.hi.wrapping_sub(0x60);
+      }
+      if hflag_set {
+        self.af.hi = self.af.hi.wrapping_sub(0x06);
+      }
+    }
+    // update flags
+    if self.af.hi == 0 {
+      self.af.lo |= FLAG_Z;
+    } else {
+      self.af.lo &= !FLAG_Z;
+    }
+    self.af.lo &= !FLAG_H;
+    Ok(())
   }
 
   /// CPL
@@ -5339,7 +5379,7 @@ impl Cpu {
   /// Flags: - - - -
   fn res_7__hl_(&mut self, _instr: u8) -> GbResult<()> {
     let val = self.bus.lazy_dref().read8(self.hl.hilo())?;
-    let val = self.res_r(6, val);
+    let val = self.res_r(7, val);
     self.bus.lazy_dref_mut().write8(self.hl.hilo(), val)
   }
 
@@ -5349,7 +5389,7 @@ impl Cpu {
   ///
   /// Flags: - - - -
   fn res_7_a(&mut self, _instr: u8) -> GbResult<()> {
-    self.hl.lo = self.res_r(7, self.hl.lo);
+    self.af.hi = self.res_r(7, self.af.hi);
     Ok(())
   }
 

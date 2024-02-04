@@ -136,7 +136,7 @@ impl Cartridge {
 
   pub fn io_write(&mut self, addr: u16, data: u8) -> GbResult<()> {
     match addr {
-      0xff50 => self.boot_mode = data > 0,
+      0xff50 => self.boot_mode = data == 0,
       _ => return gb_err!(GbErrorType::OutOfBounds),
     }
     Ok(())
