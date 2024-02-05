@@ -3239,6 +3239,8 @@ impl Cpu {
   fn pop_af(&mut self, _instr: u8) -> GbResult<()> {
     let val = self.pop()?;
     self.af.set_u16(val);
+    // can't set the lower 4 bits of the f register
+    self.af.lo &= 0xf0;
     Ok(())
   }
 

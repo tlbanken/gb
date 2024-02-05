@@ -1,9 +1,1 @@
-[x] Log
-[ ] Bus/Mem
-[ ] Imgui for Debug
-[ ] Cpu
-[ ] Graphics
-[ ] Cartridge
-[ ] Misc Registers
-[ ] Controller
-[ ] Audio
+Interrupts failing BLARG tests. Not a cpu problem, need to implement interrupt logic and also need timer to fully pass.
