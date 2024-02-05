@@ -1,5 +1,6 @@
 //! Interrupts for the Gameboy.
 
+use crate::bus::{IE_ADDR, IF_ADDR};
 use crate::cpu::Cpu;
 use crate::err::{GbError, GbErrorType, GbResult};
 use crate::gb_err;
@@ -7,9 +8,6 @@ use crate::util::LazyDref;
 use log::error;
 use std::cell::RefCell;
 use std::rc::Rc;
-
-const IE_ADDR: u16 = 0xffff;
-const IF_ADDR: u16 = 0xff0f;
 
 #[derive(Copy, Clone)]
 pub enum Interrupt {
@@ -65,11 +63,14 @@ impl Interrupts {
     self.iflag |= interrupt as u8;
   }
 
-  pub fn step(&self) {
+  pub fn step(&mut self) {
     // TODO: collect interrupts only when needed
     for interrupt in self.collect_interrupts() {
       if interrupt as u8 & self.ie > 0 {
-        self.cpu.lazy_dref_mut().interrupt(interrupt);
+        if self.cpu.lazy_dref_mut().interrupt(interrupt) {
+          // successfully handled interrupt, so clear the flag
+          self.iflag &= !(interrupt as u8);
+        }
         // only handle one interrupt
         return;
       }

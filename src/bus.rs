@@ -5,6 +5,7 @@ use std::{cell::RefCell, rc::Rc};
 
 use log::{debug, trace, warn};
 
+use crate::int::Interrupts;
 use crate::{
   cart::Cartridge,
   err::{GbError, GbErrorType, GbResult},
@@ -35,12 +36,15 @@ pub const AUDIO_START: u16 = 0xff10;
 pub const AUDIO_END: u16 = 0xff3f;
 pub const HRAM_START: u16 = 0xff80;
 pub const HRAM_END: u16 = 0xfffe;
+pub const IE_ADDR: u16 = 0xffff;
+pub const IF_ADDR: u16 = 0xff0f;
 pub struct Bus {
   wram: Option<Rc<RefCell<Ram>>>,
   eram: Option<Rc<RefCell<Ram>>>,
   hram: Option<Rc<RefCell<Ram>>>,
   cart: Option<Rc<RefCell<Cartridge>>>,
   ppu: Option<Rc<RefCell<Ppu>>>,
+  ic: Option<Rc<RefCell<Interrupts>>>,
 }
 
 impl Bus {
@@ -51,6 +55,7 @@ impl Bus {
       hram: None,
       cart: None,
       ppu: None,
+      ic: None,
     }
   }
 
@@ -104,6 +109,16 @@ impl Bus {
     Ok(())
   }
 
+  /// Adds a reference to the interrupt controller to the bus
+  pub fn connect_ic(&mut self, ic: Rc<RefCell<Interrupts>>) -> GbResult<()> {
+    debug!("Connecting gpu to the bus");
+    match self.ic {
+      None => self.ic = Some(ic),
+      Some(_) => return gb_err!(GbErrorType::AlreadyInitialized),
+    }
+    Ok(())
+  }
+
   pub fn read8(&self, addr: u16) -> GbResult<u8> {
     #[cfg(debug_assertions)]
     trace!("READ8 ${:04X}", addr);
@@ -117,6 +132,7 @@ impl Bus {
       ERAM_START..=ERAM_END => self.eram.lazy_dref().read(addr - ERAM_START),
       WRAM_START..=WRAM_END => self.wram.lazy_dref().read(addr - WRAM_START),
       HRAM_START..=HRAM_END => self.hram.lazy_dref().read(addr - HRAM_START),
+      IE_ADDR | IF_ADDR => self.ic.lazy_dref().read(addr),
       // unsupported
       _ => {
         warn!("Unsupported read8 address: ${:04X}. Returning 0", addr);
@@ -159,6 +175,10 @@ impl Bus {
         self.hram.lazy_dref().read(addr - HRAM_START)?,
         self.hram.lazy_dref().read(addr - HRAM_START + 1)?,
       ]),
+      IF_ADDR | IE_ADDR => u16::from_le_bytes([
+        self.ic.lazy_dref().read(addr)?,
+        self.ic.lazy_dref().read(addr + 1)?,
+      ]),
 
       // unsupported
       _ => {
@@ -181,6 +201,7 @@ impl Bus {
       ERAM_START..=ERAM_END => self.eram.lazy_dref_mut().write(addr - ERAM_START, val),
       WRAM_START..=WRAM_END => self.wram.lazy_dref_mut().write(addr - WRAM_START, val),
       HRAM_START..=HRAM_END => self.hram.lazy_dref_mut().write(addr - HRAM_START, val),
+      IE_ADDR | IF_ADDR => self.ic.lazy_dref_mut().write(addr, val),
       // unsupported
       _ => {
         warn!("Unsupported write8 address: [{:02X}] -> ${:04X}", val, addr);
@@ -250,6 +271,10 @@ impl Bus {
           .hram
           .lazy_dref_mut()
           .write(addr - HRAM_START + 1, bytes[1])?;
+      }
+      IF_ADDR | IE_ADDR => {
+        self.ic.lazy_dref_mut().write(addr, bytes[0])?;
+        self.ic.lazy_dref_mut().write(addr + 1, bytes[1])?;
       }
       // unsupported
       _ => {

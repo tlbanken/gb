@@ -3,7 +3,7 @@
 //! MHz.
 #![allow(non_snake_case)]
 
-use log::{error, warn};
+use log::{debug, error, warn};
 use std::collections::VecDeque;
 use std::env;
 use std::fs::File;
@@ -89,6 +89,8 @@ pub struct Cpu {
   pub pc: u16,
   /// interrupt master enable register
   pub ime: bool,
+  /// used for implementing the HALT instruction
+  pub halted: bool,
   pub bus: Option<Rc<RefCell<Bus>>>,
   pub history: InstrHistory,
   #[cfg(feature = "instr-trace")]
@@ -136,6 +138,7 @@ impl Cpu {
       sp: 0,
       pc: 0,
       ime: false,
+      halted: false,
       bus: None,
       dispatcher: Self::init_dispatcher(),
       dispatcher_cb: Self::init_dispatcher_cb(),
@@ -191,14 +194,27 @@ impl Cpu {
     Ok(())
   }
 
-  pub fn interrupt(&mut self, int: Interrupt) {
-    todo!()
-    // only handle interrupt if master flag enabled
-    // if self.ime {
-    //   match int {
-    //     // TODO
-    //   }
-    // }
+  pub fn interrupt(&mut self, int: Interrupt) -> bool {
+    self.halted = false;
+    if !self.ime {
+      return false;
+    }
+    self.ime = false;
+
+    // call appropriate handler
+    const VBLANK_HANDLER: u16 = 0x40;
+    const LCD_HANDLER: u16 = 0x48;
+    const TIMER_HANDLER: u16 = 0x50;
+    const SERIAL_HANDLER: u16 = 0x58;
+    const JOYPAD_HANDLER: u16 = 0x60;
+    match int {
+      Interrupt::Vblank => self.call(VBLANK_HANDLER).unwrap(),
+      Interrupt::Lcd => self.call(LCD_HANDLER).unwrap(),
+      Interrupt::Timer => self.call(TIMER_HANDLER).unwrap(),
+      Interrupt::Serial => self.call(SERIAL_HANDLER).unwrap(),
+      Interrupt::Joypad => self.call(JOYPAD_HANDLER).unwrap(),
+    };
+    return true;
   }
 
   #[cfg(feature = "instr-trace")]
@@ -435,8 +451,8 @@ impl Cpu {
 
   /// Enter CPU low-power consumption mode until an interrupt occurs.
   fn halt(&mut self, _instr: u8) -> GbResult<()> {
-    // TODO: cpu should sleep until interrupt occurs
-    warn!("HALT instruction not implemented!");
+    debug!("HALTing...");
+    self.halted = true;
     Ok(())
   }
 

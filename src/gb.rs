@@ -50,7 +50,7 @@ impl Gameboy {
   pub fn new(level_filter: LevelFilter) -> Gameboy {
     init_logging(level_filter);
 
-    let state = GbState::new(true);
+    let state = GbState::new(false);
 
     Gameboy {
       state,

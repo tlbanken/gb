@@ -146,7 +146,7 @@ impl Ppu {
       bgp: 0,
       scx: 0,
       scy: 0,
-      palette: PALETTE_GRAY,
+      palette: PALETTE_GREEN,
       vblank_left: 0,
       hblank_left: 0,
       screen: None,
@@ -305,6 +305,7 @@ impl Ppu {
     }
     if self.pos.y == VBLANK_START {
       self.set_ppu_mode(PpuMode::VBlank);
+      // TODO: raise interrupt
     }
     if self.pos.y == VBLANK_END {
       self.pos.y = 0;

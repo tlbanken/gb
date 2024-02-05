@@ -71,6 +71,7 @@ impl GbState {
     self.bus.borrow_mut().connect_hram(self.hram.clone())?;
     self.bus.borrow_mut().connect_cartridge(self.cart.clone())?;
     self.bus.borrow_mut().connect_ppu(self.ppu.clone())?;
+    self.bus.borrow_mut().connect_ic(self.ic.clone())?;
 
     // connect modules to bus
     self.cpu.borrow_mut().connect_bus(self.bus.clone())?;
