@@ -11,6 +11,7 @@ use std::path::PathBuf;
 use crate::bus::Bus;
 use crate::dasm::Dasm;
 use crate::ppu::Ppu;
+use crate::timer::Timer;
 use crate::util::LazyDref;
 use crate::{cpu, cpu::Cpu, event::UserEvent, state::GbState};
 
@@ -21,6 +22,7 @@ pub struct UiState {
   pub show_mem_window: bool,
   pub show_stat_window: bool,
   pub show_ppu_reg_window: bool,
+  pub show_timer_window: bool,
 }
 
 impl UiState {
@@ -32,6 +34,7 @@ impl UiState {
       show_mem_window: false,
       show_stat_window: false,
       show_ppu_reg_window: false,
+      show_timer_window: false,
     }
   }
 
@@ -106,6 +109,10 @@ impl Ui {
               ui_state.show_mem_window = !ui_state.show_mem_window;
               ui.close_menu();
             }
+            if ui.button("Timer").clicked() {
+              ui_state.show_timer_window = !ui_state.show_timer_window;
+              ui.close_menu();
+            }
           });
 
           if ui.button("Load Cartridge").clicked() {
@@ -178,6 +185,9 @@ impl Ui {
     }
     if ui_state.show_ppu_reg_window {
       self.ui_ppu_reg(ctx, &mut gb_state.ppu.borrow_mut());
+    }
+    if ui_state.show_timer_window {
+      self.ui_timer(ctx, &mut gb_state.timer.borrow_mut());
     }
   }
 
@@ -321,6 +331,15 @@ impl Ui {
           },
         );
       });
+  }
+
+  fn ui_timer(&self, ctx: &Context, timer: &mut Timer) {
+    egui::Window::new("Timer Registers").show(ctx, |ui| {
+      ui.monospace(format!("DIV: 0x{:02X}", timer.div));
+      ui.monospace(format!("TIMA: 0x{:02X}", timer.tima));
+      ui.monospace(format!("TMA: 0x{:02X}", timer.tma));
+      ui.monospace(format!("TAC: 0x{:02X}", u8::from(timer.tac)));
+    });
   }
 
   fn ui_reso(&self, ui: &mut egui::Ui) {

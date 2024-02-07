@@ -14,6 +14,7 @@ mod ram;
 mod screen;
 mod state;
 mod tick_counter;
+mod timer;
 mod ui;
 mod util;
 mod video;

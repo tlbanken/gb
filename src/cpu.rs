@@ -157,7 +157,7 @@ impl Cpu {
     Ok(())
   }
 
-  /// Execute one instruction
+  /// Execute one instruction and return the number of cycles it took
   pub fn step(&mut self) -> GbResult<()> {
     // instruction tracing
     #[cfg(feature = "instr-trace")]
@@ -453,6 +453,7 @@ impl Cpu {
   fn halt(&mut self, _instr: u8) -> GbResult<()> {
     debug!("HALTing...");
     self.halted = true;
+    // TODO need to skip another byte?
     Ok(())
   }
 

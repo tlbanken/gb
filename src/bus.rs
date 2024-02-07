@@ -6,6 +6,7 @@ use std::{cell::RefCell, rc::Rc};
 use log::{debug, trace, warn};
 
 use crate::int::Interrupts;
+use crate::timer::Timer;
 use crate::{
   cart::Cartridge,
   err::{GbError, GbErrorType, GbResult},
@@ -45,6 +46,7 @@ pub struct Bus {
   cart: Option<Rc<RefCell<Cartridge>>>,
   ppu: Option<Rc<RefCell<Ppu>>>,
   ic: Option<Rc<RefCell<Interrupts>>>,
+  timer: Option<Rc<RefCell<Timer>>>,
 }
 
 impl Bus {
@@ -56,6 +58,7 @@ impl Bus {
       cart: None,
       ppu: None,
       ic: None,
+      timer: None,
     }
   }
 
@@ -119,6 +122,16 @@ impl Bus {
     Ok(())
   }
 
+  /// Adds a reference to the timer to the bus
+  pub fn connect_timer(&mut self, timer: Rc<RefCell<Timer>>) -> GbResult<()> {
+    debug!("Connecting gpu to the bus");
+    match self.timer {
+      None => self.timer = Some(timer),
+      Some(_) => return gb_err!(GbErrorType::AlreadyInitialized),
+    }
+    Ok(())
+  }
+
   pub fn read8(&self, addr: u16) -> GbResult<u8> {
     #[cfg(debug_assertions)]
     trace!("READ8 ${:04X}", addr);
@@ -132,6 +145,7 @@ impl Bus {
       ERAM_START..=ERAM_END => self.eram.lazy_dref().read(addr - ERAM_START),
       WRAM_START..=WRAM_END => self.wram.lazy_dref().read(addr - WRAM_START),
       HRAM_START..=HRAM_END => self.hram.lazy_dref().read(addr - HRAM_START),
+      TIMER_START..=TIMER_END => self.timer.lazy_dref().read(addr),
       IE_ADDR | IF_ADDR => self.ic.lazy_dref().read(addr),
       // unsupported
       _ => {
@@ -175,6 +189,10 @@ impl Bus {
         self.hram.lazy_dref().read(addr - HRAM_START)?,
         self.hram.lazy_dref().read(addr - HRAM_START + 1)?,
       ]),
+      TIMER_START..=TIMER_END => u16::from_le_bytes([
+        self.timer.lazy_dref().read(addr)?,
+        self.timer.lazy_dref().read(addr + 1)?,
+      ]),
       IF_ADDR | IE_ADDR => u16::from_le_bytes([
         self.ic.lazy_dref().read(addr)?,
         self.ic.lazy_dref().read(addr + 1)?,
@@ -201,6 +219,7 @@ impl Bus {
       ERAM_START..=ERAM_END => self.eram.lazy_dref_mut().write(addr - ERAM_START, val),
       WRAM_START..=WRAM_END => self.wram.lazy_dref_mut().write(addr - WRAM_START, val),
       HRAM_START..=HRAM_END => self.hram.lazy_dref_mut().write(addr - HRAM_START, val),
+      TIMER_START..=TIMER_END => self.timer.lazy_dref_mut().write(addr, val),
       IE_ADDR | IF_ADDR => self.ic.lazy_dref_mut().write(addr, val),
       // unsupported
       _ => {
@@ -271,6 +290,10 @@ impl Bus {
           .hram
           .lazy_dref_mut()
           .write(addr - HRAM_START + 1, bytes[1])?;
+      }
+      TIMER_START..=TIMER_END => {
+        self.timer.lazy_dref_mut().write(addr, bytes[0])?;
+        self.timer.lazy_dref_mut().write(addr + 1, bytes[1])?;
       }
       IF_ADDR | IE_ADDR => {
         self.ic.lazy_dref_mut().write(addr, bytes[0])?;
