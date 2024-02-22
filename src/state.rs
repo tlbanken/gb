@@ -105,7 +105,7 @@ impl GbState {
 
   fn step_chunk(&mut self) -> GbResult<()> {
     // if we are running too fast, skip
-    let clock_rate = self.cycles.tps() * 4.0;
+    let clock_rate = self.cycles.tps();
     if clock_rate > cpu::CLOCK_RATE {
       return Ok(());
     }
@@ -124,14 +124,13 @@ impl GbState {
 
   #[inline]
   fn step_one(&mut self) -> GbResult<()> {
-    self.cpu.borrow_mut().step()?;
-    self.cycles.tick();
-    // 4 ppu steps per cpu step
-    for _ in 0..4 {
-      self.ppu.borrow_mut().step()?;
+    let cycle_budget = self.cpu.borrow_mut().step()?;
+    for _ in 0..cycle_budget {
+      self.cycles.tick();
     }
+    self.ppu.borrow_mut().step(cycle_budget)?;
     self.ic.borrow_mut().step();
-    self.timer.borrow_mut().step();
+    self.timer.borrow_mut().step(cycle_budget);
     Ok(())
   }
 }

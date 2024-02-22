@@ -1,6 +1,5 @@
 //! Timer for the Gameboy system.
 
-use crate::bus::{IE_ADDR, IF_ADDR};
 use crate::err::{GbError, GbErrorType, GbResult};
 use crate::int::{Interrupt, Interrupts};
 use crate::util::LazyDref;
@@ -23,13 +22,12 @@ pub enum ClockRate {
 }
 
 impl ClockRate {
-  pub fn as_cpu_ticks(self) -> u32 {
+  pub fn as_div(self) -> u32 {
     match self {
-      // TODO
-      ClockRate::Div1024 => (cpu::CLOCK_RATE as u32 / 1024) / 4,
-      ClockRate::Div16 => (cpu::CLOCK_RATE as u32 / 16) / 4,
-      ClockRate::Div64 => (cpu::CLOCK_RATE as u32 / 64) / 4,
-      ClockRate::Div256 => (cpu::CLOCK_RATE as u32 / 256) / 4,
+      ClockRate::Div1024 => 1024,
+      ClockRate::Div16 => 16,
+      ClockRate::Div64 => 64,
+      ClockRate::Div256 => 256,
     }
   }
 }
@@ -83,8 +81,7 @@ pub struct Timer {
   ic: Option<Rc<RefCell<Interrupts>>>,
 
   /// keep track of cpu ticks
-  tima_cpu_ticks: u32,
-  div_cpu_ticks: u32,
+  master_clock: u32,
 }
 
 impl Timer {
@@ -95,8 +92,7 @@ impl Timer {
       tma: 0,
       tac: Tac::from(0),
       ic: None,
-      tima_cpu_ticks: 0,
-      div_cpu_ticks: 0,
+      master_clock: 0,
     }
   }
 
@@ -109,21 +105,24 @@ impl Timer {
     Ok(())
   }
 
-  /// Step the timer. This should be called once every cpu tick (4 clock cycles)
-  pub fn step(&mut self) {
-    self.tima_cpu_ticks += 1;
-    self.div_cpu_ticks += 1;
+  /// Step the timer. Will tick as many times as budget allows.
+  pub fn step(&mut self, cycle_budget: u32) {
+    for cycle in 0..cycle_budget {
+      self.step_one();
+    }
+  }
+
+  fn step_one(&mut self) {
+    self.master_clock = self.master_clock.wrapping_add(1);
 
     // DIV clock rate is always Div256
-    if self.div_cpu_ticks == ClockRate::Div256.as_cpu_ticks() {
+    if self.master_clock % ClockRate::Div256.as_div() == 0 {
       self.div = self.div.wrapping_add(1);
-      self.div_cpu_ticks = 0;
     }
 
     // TIMA checks
-    if self.tac.enable && self.tima_cpu_ticks == self.tac.clock_rate.as_cpu_ticks() {
+    if self.tac.enable && self.master_clock % self.tac.clock_rate.as_div() == 0 {
       self.tick();
-      self.tima_cpu_ticks = 0;
     }
   }
 
@@ -132,6 +131,7 @@ impl Timer {
   fn tick(&mut self) {
     self.tima = self.tima.wrapping_add(1);
     if self.tima == 0 {
+      self.ic.lazy_dref_mut().raise(Interrupt::Timer);
       self.tima = self.tma;
     }
   }

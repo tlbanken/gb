@@ -146,7 +146,7 @@ impl Ppu {
       bgp: 0,
       scx: 0,
       scy: 0,
-      palette: PALETTE_GREEN,
+      palette: PALETTE_GRAY,
       vblank_left: 0,
       hblank_left: 0,
       screen: None,
@@ -162,7 +162,14 @@ impl Ppu {
     Ok(())
   }
 
-  pub fn step(&mut self) -> GbResult<()> {
+  pub fn step(&mut self, cycle_budget: u32) -> GbResult<()> {
+    for _ in 0..cycle_budget {
+      self.step_one()?;
+    }
+    Ok(())
+  }
+
+  fn step_one(&mut self) -> GbResult<()> {
     // only draw when we need to
     if self.ppu_mode() == PpuMode::Rendering {
       // our pixel coordinate needs to be adjusted for scrolling
