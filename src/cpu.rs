@@ -5,15 +5,17 @@
 
 use log::{debug, error, warn};
 use std::collections::VecDeque;
+#[cfg(feature = "instr-trace")]
 use std::env;
+#[cfg(feature = "instr-trace")]
 use std::fs::File;
+#[cfg(feature = "instr-trace")]
 use std::io::Write;
 use std::{cell::RefCell, rc::Rc};
 
 use crate::int::Interrupt;
 use crate::{
   bus::Bus,
-  dasm::Dasm,
   err::{GbError, GbErrorType, GbResult},
   gb_err,
   util::LazyDref,
@@ -22,7 +24,7 @@ use crate::{
 pub const CLOCK_RATE: f32 = 4_194_304.0;
 pub const CLOCK_RATE_MHZ: f32 = 4.194304;
 
-type DispatchFn = fn(&mut Cpu, instr: u8) -> GbResult<()>;
+type DispatchFn = fn(&mut Cpu, instr: u8) -> GbResult<u32>;
 
 // flags const
 /// Zero flag. Set if result of an operation is zero.
@@ -158,7 +160,7 @@ impl Cpu {
   }
 
   /// Execute one instruction and return the number of cycles it took
-  pub fn step(&mut self) -> GbResult<()> {
+  pub fn step(&mut self) -> GbResult<u32> {
     // instruction tracing
     #[cfg(feature = "instr-trace")]
     {
@@ -189,9 +191,9 @@ impl Cpu {
     self.pc = self.pc.wrapping_add(1);
 
     // instruction dispatch
-    self.dispatcher[instr as usize](self, instr)?;
+    let num_cycles = self.dispatcher[instr as usize](self, instr)?;
 
-    Ok(())
+    Ok(num_cycles)
   }
 
   pub fn interrupt(&mut self, int: Interrupt) -> bool {
@@ -424,7 +426,7 @@ impl Cpu {
   }
 
   /// Unknown Instruction, returns an error
-  fn badi(&mut self, instr: u8) -> GbResult<()> {
+  fn badi(&mut self, instr: u8) -> GbResult<u32> {
     error!("Unknown instruction: 0x{:02x}", instr);
     gb_err!(GbErrorType::InvalidCpuInstruction)
   }
@@ -438,29 +440,33 @@ impl Cpu {
   /// Flags: - - - -
   ///
   /// Description: no operation
-  fn nop(&mut self, _instr: u8) -> GbResult<()> {
-    Ok(())
+  fn nop(&mut self, _instr: u8) -> GbResult<u32> {
+    Ok(4)
   }
 
   /// Enter CPU very low power mode. Also used to switch between double and
   /// normal speed CPU modes in GBC.
-  fn stop(&mut self, _instr: u8) -> GbResult<()> {
+  ///
+  /// Cycles: 4
+  fn stop(&mut self, _instr: u8) -> GbResult<u32> {
     warn!("STOP instruction not implemented!");
-    Ok(())
+    Ok(4)
   }
 
   /// Enter CPU low-power consumption mode until an interrupt occurs.
-  fn halt(&mut self, _instr: u8) -> GbResult<()> {
+  ///
+  /// Cycles: 4
+  fn halt(&mut self, _instr: u8) -> GbResult<u32> {
     debug!("HALTing...");
     self.halted = true;
     // TODO need to skip another byte?
-    Ok(())
+    Ok(4)
   }
 
   /// CB XX
   ///
   /// Dispatches an instruction which has the "CB" prefix.
-  fn prefix_cb(&mut self, _instr: u8) -> GbResult<()> {
+  fn prefix_cb(&mut self, _instr: u8) -> GbResult<u32> {
     let instr = self.bus.lazy_dref().read8(self.pc)?;
     self.pc = self.pc.wrapping_add(1);
     self.dispatcher_cb[instr as usize](self, instr)
@@ -472,917 +478,1133 @@ impl Cpu {
   ///
   /// Loads an imm16 into BC register.
   ///
+  /// Cycles: 12
+  ///
   /// Flags: - - - -
-  fn ld_bc_d16(&mut self, _instr: u8) -> GbResult<()> {
+  fn ld_bc_d16(&mut self, _instr: u8) -> GbResult<u32> {
     let d16 = self.get_imm16()?;
     self.bc.set_u16(d16);
-    Ok(())
+    Ok(12)
   }
 
   /// LD B d8
   ///
   /// Loads an imm8 into the B register.
   ///
+  /// Cycles: 8
+  ///
   /// Flags: - - - -
-  fn ld_b_d8(&mut self, _instr: u8) -> GbResult<()> {
+  fn ld_b_d8(&mut self, _instr: u8) -> GbResult<u32> {
     let d8 = self.get_imm8()?;
     self.bc.hi = d8;
-    Ok(())
+    Ok(8)
   }
 
   /// LD (BC) A
   ///
   /// Store A into address pointed to by BC
   ///
+  /// Cycles: 8
+  ///
   /// Flags: - - - -
-  fn ld__bc__a(&mut self, _instr: u8) -> GbResult<()> {
+  fn ld__bc__a(&mut self, _instr: u8) -> GbResult<u32> {
     self
       .bus
       .lazy_dref_mut()
       .write8(self.bc.hilo(), self.af.hi)?;
-    Ok(())
+    Ok(8)
   }
 
   /// LD A (BC)
   ///
   /// Load A from address pointed to by BC
   ///
+  /// Cycles: 8
+  ///
   /// Flags: - - - -
-  fn ld_a__bc_(&mut self, _instr: u8) -> GbResult<()> {
+  fn ld_a__bc_(&mut self, _instr: u8) -> GbResult<u32> {
     self.af.hi = self.bus.lazy_dref().read8(self.bc.hilo())?;
-    Ok(())
+    Ok(8)
   }
 
   /// LD (a16) SP
   ///
   /// Store SP into address given by imm16
   ///
+  /// Cycles: 20
+  ///
   /// Flags: - - - -
-  fn ld__a16__sp(&mut self, _instr: u8) -> GbResult<()> {
+  fn ld__a16__sp(&mut self, _instr: u8) -> GbResult<u32> {
     let a16 = self.get_imm16()?;
-    self.bus.lazy_dref_mut().write16(a16, self.sp)
+    self.bus.lazy_dref_mut().write16(a16, self.sp)?;
+    Ok(20)
   }
 
   /// LD C d8
   ///
   /// Load imm8 into C register
   ///
+  /// Cycles: 8
+  ///
   /// FLAGS: - - - -
-  fn ld_c_d8(&mut self, _instr: u8) -> GbResult<()> {
+  fn ld_c_d8(&mut self, _instr: u8) -> GbResult<u32> {
     let d8 = self.get_imm8()?;
     self.bc.lo = d8;
-    Ok(())
+    Ok(8)
   }
 
   /// LD DE d16
   ///
   /// Load imm16 into DE register
   ///
+  /// Cycles: 12
+  ///
   /// FLAGS: - - - -
-  fn ld_de_d16(&mut self, _instr: u8) -> GbResult<()> {
+  fn ld_de_d16(&mut self, _instr: u8) -> GbResult<u32> {
     let d16 = self.get_imm16()?;
     self.de.set_u16(d16);
-    Ok(())
+    Ok(12)
   }
 
   /// LD (DE) A
   ///
   /// Store A register into address pointed by DE
   ///
+  /// Cycles: 8
+  ///
   /// FLAGS: - - - -
-  fn ld__de__a(&mut self, _instr: u8) -> GbResult<()> {
-    self.bus.lazy_dref_mut().write8(self.de.hilo(), self.af.hi)
+  fn ld__de__a(&mut self, _instr: u8) -> GbResult<u32> {
+    self
+      .bus
+      .lazy_dref_mut()
+      .write8(self.de.hilo(), self.af.hi)?;
+    Ok(8)
   }
 
   /// LD D d8
   ///
   /// Load imm8 into D
   ///
+  /// Cycles: 8
+  ///
   /// Flags: - - - -
-  fn ld_d_d8(&mut self, _instr: u8) -> GbResult<()> {
+  fn ld_d_d8(&mut self, _instr: u8) -> GbResult<u32> {
     let d8 = self.get_imm8()?;
     self.de.hi = d8;
-    Ok(())
+    Ok(8)
   }
 
   /// LD A (DE)
   ///
   /// Load value pointed to by DE into A.
   ///
+  /// Cycles: 8
+  ///
   /// Flags: - - - -
-  fn ld_a__de_(&mut self, _instr: u8) -> GbResult<()> {
+  fn ld_a__de_(&mut self, _instr: u8) -> GbResult<u32> {
     self.af.hi = self.bus.lazy_dref().read8(self.de.hilo())?;
-    Ok(())
+    Ok(8)
   }
 
   /// LD E d8
   ///
   /// Load imm8 into E register
   ///
+  /// Cycles: 8
+  ///
   /// Flags: - - - -
-  fn ld_e_d8(&mut self, _instr: u8) -> GbResult<()> {
+  fn ld_e_d8(&mut self, _instr: u8) -> GbResult<u32> {
     let d8 = self.get_imm8()?;
     self.de.lo = d8;
-    Ok(())
+    Ok(8)
   }
 
   /// LD HI d16
   ///
   /// Load imm16 into HL register.
   ///
+  /// Cycles: 12
+  ///
   /// Flags: - - - -
-  fn ld_hl_d16(&mut self, _instr: u8) -> GbResult<()> {
+  fn ld_hl_d16(&mut self, _instr: u8) -> GbResult<u32> {
     let d16 = self.get_imm16()?;
     self.hl.set_u16(d16);
-    Ok(())
+    Ok(12)
   }
 
   /// LD (HL+) A
   ///
   /// Load A into value pointed by HL. Increment HL.
   ///
+  /// Cycles: 8
+  ///
   /// Flags: - - - -
-  fn ld__hli__a(&mut self, _instr: u8) -> GbResult<()> {
+  fn ld__hli__a(&mut self, _instr: u8) -> GbResult<u32> {
     self
       .bus
       .lazy_dref_mut()
       .write8(self.hl.hilo(), self.af.hi)?;
     self.hl.set_u16(self.hl.hilo().wrapping_add(1));
-    Ok(())
+    Ok(8)
   }
 
   /// LD H d8
   ///
   /// Load imm8 into H register.
   ///
+  /// Cycles: 8
+  ///
   /// Flags: - - - -
-  fn ld_h_d8(&mut self, _instr: u8) -> GbResult<()> {
+  fn ld_h_d8(&mut self, _instr: u8) -> GbResult<u32> {
     let d8 = self.get_imm8()?;
     self.hl.hi = d8;
-    Ok(())
+    Ok(8)
   }
 
   /// LD L d8
   ///
   /// Load imm8 into L register.
   ///
+  /// Cycles: 8
+  ///
   /// Flags: - - - -
-  fn ld_l_d8(&mut self, _instr: u8) -> GbResult<()> {
+  fn ld_l_d8(&mut self, _instr: u8) -> GbResult<u32> {
     let d8 = self.get_imm8()?;
     self.hl.lo = d8;
-    Ok(())
+    Ok(8)
   }
 
   /// ld sp d16
   ///
   /// Loads the sp register with the provided imm16
   ///
+  /// Cycles: 12
+  ///
   /// Flags: - - - -
-  fn ld_sp_d16(&mut self, _instr: u8) -> GbResult<()> {
+  fn ld_sp_d16(&mut self, _instr: u8) -> GbResult<u32> {
     let d16 = self.get_imm16()?;
     self.sp = d16;
-    Ok(())
+    Ok(12)
   }
 
   /// LD A (HL+)
   ///
   /// Loads value pointed by HL into A and increments HL.
   ///
+  /// Cycles: 8
+  ///
   /// Flags: - - - -
-  fn ld_a__hli_(&mut self, _instr: u8) -> GbResult<()> {
+  fn ld_a__hli_(&mut self, _instr: u8) -> GbResult<u32> {
     self.af.hi = self.bus.lazy_dref().read8(self.hl.hilo())?;
     self.hl.set_u16(self.hl.hilo().wrapping_add(1));
-    Ok(())
+    Ok(8)
   }
 
   /// LD (HL-) A
   ///
   /// Store A into address pointed by HL and decrement HL.
   ///
+  /// Cycles: 8
+  ///
   /// Flags: - - - -
-  fn ld__hld__a(&mut self, _instr: u8) -> GbResult<()> {
+  fn ld__hld__a(&mut self, _instr: u8) -> GbResult<u32> {
     self
       .bus
       .lazy_dref_mut()
       .write8(self.hl.hilo(), self.af.hi)?;
     self.hl.set_u16(self.hl.hilo().wrapping_sub(1));
-    Ok(())
+    Ok(8)
   }
 
   /// LD (HL) d8
   ///
   /// Store imm8 into address pointed to by HL.
   ///
+  /// Cycles: 12
+  ///
   /// Flags: - - - -
-  fn ld__hl__d8(&mut self, _instr: u8) -> GbResult<()> {
+  fn ld__hl__d8(&mut self, _instr: u8) -> GbResult<u32> {
     let d8 = self.get_imm8()?;
-    self.bus.lazy_dref_mut().write8(self.hl.hilo(), d8)
+    self.bus.lazy_dref_mut().write8(self.hl.hilo(), d8)?;
+    Ok(12)
   }
 
   /// LD A (HL-)
   ///
   /// Load value pointed to by HL into A register. Decrement HL register.
   ///
+  /// Cycles: 8
+  ///
   /// Flags: - - - -
-  fn ld_a__hld_(&mut self, _instr: u8) -> GbResult<()> {
+  fn ld_a__hld_(&mut self, _instr: u8) -> GbResult<u32> {
     self.af.hi = self.bus.lazy_dref().read8(self.hl.hilo())?;
     self.hl.set_u16(self.hl.hilo().wrapping_sub(1));
-    Ok(())
+    Ok(8)
   }
 
   /// LD A d8
   ///
   /// Load imm8 into A register
   ///
+  /// Cycles: 8
+  ///
   /// Flags: - - - -
-  fn ld_a_d8(&mut self, _instr: u8) -> GbResult<()> {
+  fn ld_a_d8(&mut self, _instr: u8) -> GbResult<u32> {
     let d8 = self.get_imm8()?;
     self.af.hi = d8;
-    Ok(())
+    Ok(8)
   }
 
   /// LD B B
   ///
   /// Load B register into B
   ///
+  /// Cycles: 4
+  ///
   /// Flags: - - - -
-  fn ld_b_b(&mut self, _instr: u8) -> GbResult<()> {
+  fn ld_b_b(&mut self, _instr: u8) -> GbResult<u32> {
     // nop
-    Ok(())
+    Ok(4)
   }
 
   /// LD B C
   ///
   /// Load C into B register.
   ///
+  /// Cycles: 4
+  ///
   /// Flags: - - - -
-  fn ld_b_c(&mut self, _instr: u8) -> GbResult<()> {
+  fn ld_b_c(&mut self, _instr: u8) -> GbResult<u32> {
     self.bc.hi = self.bc.lo;
-    Ok(())
+    Ok(4)
   }
 
   /// LD B D
   ///
   /// Load D into B register
   ///
+  /// Cycles: 4
+  ///
   /// Flags: - - - -
-  fn ld_b_d(&mut self, _instr: u8) -> GbResult<()> {
+  fn ld_b_d(&mut self, _instr: u8) -> GbResult<u32> {
     self.bc.hi = self.de.hi;
-    Ok(())
+    Ok(4)
   }
 
   /// LD B E
   ///
   /// Load E into B register.
   ///
+  /// Cycles: 4
+  ///
   /// Flags: - - - -
-  fn ld_b_e(&mut self, _instr: u8) -> GbResult<()> {
+  fn ld_b_e(&mut self, _instr: u8) -> GbResult<u32> {
     self.bc.hi = self.de.lo;
-    Ok(())
+    Ok(4)
   }
 
   /// LD B H
   ///
   /// Load H into B register.
   ///
+  /// Cycles: 4
+  ///
   /// Flags: - - - -
-  fn ld_b_h(&mut self, _instr: u8) -> GbResult<()> {
+  fn ld_b_h(&mut self, _instr: u8) -> GbResult<u32> {
     self.bc.hi = self.hl.hi;
-    Ok(())
+    Ok(4)
   }
 
   /// LD B L
   ///
   /// Load L into B register.
   ///
+  /// Cycles: 4
+  ///
   /// Flags: - - - -
-  fn ld_b_l(&mut self, _instr: u8) -> GbResult<()> {
+  fn ld_b_l(&mut self, _instr: u8) -> GbResult<u32> {
     self.bc.hi = self.hl.lo;
-    Ok(())
+    Ok(4)
   }
 
   /// LD B (HL)
   ///
   /// Load value pointed by HL into B register.
   ///
+  /// Cycles: 8
+  ///
   /// Flags: - - - -
-  fn ld_b__hl_(&mut self, _instr: u8) -> GbResult<()> {
+  fn ld_b__hl_(&mut self, _instr: u8) -> GbResult<u32> {
     self.bc.hi = self.bus.lazy_dref().read8(self.hl.hilo())?;
-    Ok(())
+    Ok(8)
   }
 
   /// LD B A
   ///
   /// Load A into B register
   ///
+  /// Cycles: 4
+  ///
   /// Flags: - - - -
-  fn ld_b_a(&mut self, _instr: u8) -> GbResult<()> {
+  fn ld_b_a(&mut self, _instr: u8) -> GbResult<u32> {
     self.bc.hi = self.af.hi;
-    Ok(())
+    Ok(4)
   }
 
   /// LD C B
   ///
   /// Load B into C register.
   ///
+  /// Cycles: 4
+  ///
   /// Flags: - - - -
-  fn ld_c_b(&mut self, _instr: u8) -> GbResult<()> {
+  fn ld_c_b(&mut self, _instr: u8) -> GbResult<u32> {
     self.bc.lo = self.bc.hi;
-    Ok(())
+    Ok(4)
   }
 
   /// LD C C
   ///
   /// Load C into C register
   ///
+  /// Cycles: 4
+  ///
   /// Flags: - - - -
-  fn ld_c_c(&mut self, _instr: u8) -> GbResult<()> {
+  fn ld_c_c(&mut self, _instr: u8) -> GbResult<u32> {
     // nop
-    Ok(())
+    Ok(4)
   }
 
   /// LD C D
   ///
   /// Load D into C register
   ///
+  /// Cycles: 4
+  ///
   /// Flags: - - - -
-  fn ld_c_d(&mut self, _instr: u8) -> GbResult<()> {
+  fn ld_c_d(&mut self, _instr: u8) -> GbResult<u32> {
     self.bc.lo = self.de.hi;
-    Ok(())
+    Ok(4)
   }
 
   /// LD C E
   ///
   /// Load E into C register
   ///
+  /// Cycles: 4
+  ///
   /// Flags: - - - -
-  fn ld_c_e(&mut self, _instr: u8) -> GbResult<()> {
+  fn ld_c_e(&mut self, _instr: u8) -> GbResult<u32> {
     self.bc.lo = self.de.lo;
-    Ok(())
+    Ok(4)
   }
 
   /// LD C H
   ///
   /// Load H into C register
   ///
+  /// Cycles: 4
+  ///
   /// Flags: - - - -
-  fn ld_c_h(&mut self, _instr: u8) -> GbResult<()> {
+  fn ld_c_h(&mut self, _instr: u8) -> GbResult<u32> {
     self.bc.lo = self.hl.hi;
-    Ok(())
+    Ok(4)
   }
 
   /// LD C L
   ///
   /// Load L into C register
   ///
+  /// Cycles: 4
+  ///
   /// Flags: - - - -
-  fn ld_c_l(&mut self, _instr: u8) -> GbResult<()> {
+  fn ld_c_l(&mut self, _instr: u8) -> GbResult<u32> {
     self.bc.lo = self.hl.lo;
-    Ok(())
+    Ok(4)
   }
 
   /// LD C (HL)
   ///
   /// Load val pointed by HL into C register
   ///
+  /// Cycles: 8
+  ///
   /// Flags: - - - -
-  fn ld_c__hl_(&mut self, _instr: u8) -> GbResult<()> {
+  fn ld_c__hl_(&mut self, _instr: u8) -> GbResult<u32> {
     self.bc.lo = self.bus.lazy_dref().read8(self.hl.hilo())?;
-    Ok(())
+    Ok(8)
   }
 
   /// LD C A
   ///
   /// Load A into C register
   ///
+  /// Cycles: 4
+  ///
   /// Flags: - - - -
-  fn ld_c_a(&mut self, _instr: u8) -> GbResult<()> {
+  fn ld_c_a(&mut self, _instr: u8) -> GbResult<u32> {
     self.bc.lo = self.af.hi;
-    Ok(())
+    Ok(4)
   }
 
   /// LD D B
   ///
   /// Load B into D register
   ///
+  /// Cycles: 4
+  ///
   /// Flags: - - - -
-  fn ld_d_b(&mut self, _instr: u8) -> GbResult<()> {
+  fn ld_d_b(&mut self, _instr: u8) -> GbResult<u32> {
     self.de.hi = self.bc.hi;
-    Ok(())
+    Ok(4)
   }
 
   /// LD D C
   ///
   /// Load C into D register
   ///
+  /// Cycles: 4
+  ///
   /// Flags: - - - -
-  fn ld_d_c(&mut self, _instr: u8) -> GbResult<()> {
+  fn ld_d_c(&mut self, _instr: u8) -> GbResult<u32> {
     self.de.hi = self.bc.lo;
-    Ok(())
+    Ok(4)
   }
 
   /// LD D D
   ///
   /// Load D into D register
   ///
+  /// Cycles: 4
+  ///
   /// Flags: - - - -
-  fn ld_d_d(&mut self, _instr: u8) -> GbResult<()> {
+  fn ld_d_d(&mut self, _instr: u8) -> GbResult<u32> {
     // nop
-    Ok(())
+    Ok(4)
   }
 
   /// LD D E
   ///
   /// Load E into D
   ///
+  /// Cycles: 4
+  ///
   /// Flags: - - - -
-  fn ld_d_e(&mut self, _instr: u8) -> GbResult<()> {
+  fn ld_d_e(&mut self, _instr: u8) -> GbResult<u32> {
     self.de.hi = self.de.lo;
-    Ok(())
+    Ok(4)
   }
 
   /// LD D H
   ///
   /// Load H into D register
   ///
+  /// Cycles: 4
+  ///
   /// Flags: - - - -
-  fn ld_d_h(&mut self, _instr: u8) -> GbResult<()> {
+  fn ld_d_h(&mut self, _instr: u8) -> GbResult<u32> {
     self.de.hi = self.hl.hi;
-    Ok(())
+    Ok(4)
   }
 
   /// LD D L
   ///
   /// Load L into D register
   ///
+  /// Cycles: 4
+  ///
   /// Flags: - - - -
-  fn ld_d_l(&mut self, _instr: u8) -> GbResult<()> {
+  fn ld_d_l(&mut self, _instr: u8) -> GbResult<u32> {
     self.de.hi = self.hl.lo;
-    Ok(())
+    Ok(4)
   }
 
   /// LD D (HL)
   ///
   /// Load value pointed to by HL into D
   ///
+  /// Cycles: 8
+  ///
   /// Flags: - - - -
-  fn ld_d__hl_(&mut self, _instr: u8) -> GbResult<()> {
+  fn ld_d__hl_(&mut self, _instr: u8) -> GbResult<u32> {
     self.de.hi = self.bus.lazy_dref().read8(self.hl.hilo())?;
-    Ok(())
+    Ok(8)
   }
 
   /// LD D A
   ///
   /// Load A into D
   ///
+  /// Cycles: 4
+  ///
   /// Flags: - - - -
-  fn ld_d_a(&mut self, _instr: u8) -> GbResult<()> {
+  fn ld_d_a(&mut self, _instr: u8) -> GbResult<u32> {
     self.de.hi = self.af.hi;
-    Ok(())
+    Ok(4)
   }
 
   /// LD E B
   ///
   /// Load B into E
   ///
+  /// Cycles: 4
+  ///
   /// Flags: - - - -
-  fn ld_e_b(&mut self, _instr: u8) -> GbResult<()> {
+  fn ld_e_b(&mut self, _instr: u8) -> GbResult<u32> {
     self.de.lo = self.bc.hi;
-    Ok(())
+    Ok(4)
   }
 
   /// LD E C
   ///
   /// Load C into E
   ///
+  /// Cycles: 4
+  ///
   /// Flags: - - - -
-  fn ld_e_c(&mut self, _instr: u8) -> GbResult<()> {
+  fn ld_e_c(&mut self, _instr: u8) -> GbResult<u32> {
     self.de.lo = self.bc.lo;
-    Ok(())
+    Ok(4)
   }
 
   /// LD E D
   ///
   /// Load D into E
   ///
+  /// Cycles: 4
+  ///
   /// Flags: - - - -
-  fn ld_e_d(&mut self, _instr: u8) -> GbResult<()> {
+  fn ld_e_d(&mut self, _instr: u8) -> GbResult<u32> {
     self.de.lo = self.de.hi;
-    Ok(())
+    Ok(4)
   }
 
   /// LD E E
   ///
   /// Load E into E
   ///
+  /// Cycles: 4
+  ///
   /// Flags: - - - -
-  fn ld_e_e(&mut self, _instr: u8) -> GbResult<()> {
+  fn ld_e_e(&mut self, _instr: u8) -> GbResult<u32> {
     // nop
-    Ok(())
+    Ok(4)
   }
 
   /// LD E H
   ///
   /// Load H into E
   ///
+  /// Cycles: 4
+  ///
   /// Flags: - - - -
-  fn ld_e_h(&mut self, _instr: u8) -> GbResult<()> {
+  fn ld_e_h(&mut self, _instr: u8) -> GbResult<u32> {
     self.de.lo = self.hl.hi;
-    Ok(())
+    Ok(4)
   }
 
   /// LD E L
   ///
   /// Load L into E
   ///
+  /// Cycles: 4
+  ///
   /// Flags: - - - -
-  fn ld_e_l(&mut self, _instr: u8) -> GbResult<()> {
+  fn ld_e_l(&mut self, _instr: u8) -> GbResult<u32> {
     self.de.lo = self.hl.lo;
-    Ok(())
+    Ok(4)
   }
 
   /// LD E (HL)
   ///
   /// Load value pointed to by HL into E
   ///
+  /// Cycles: 8
+  ///
   /// Flags: - - - -
-  fn ld_e__hl_(&mut self, _instr: u8) -> GbResult<()> {
+  fn ld_e__hl_(&mut self, _instr: u8) -> GbResult<u32> {
     self.de.lo = self.bus.lazy_dref().read8(self.hl.hilo())?;
-    Ok(())
+    Ok(8)
   }
 
   /// LD E A
   ///
   /// Load A into E
   ///
+  /// Cycles 4
+  ///
   /// Flags: - - - -
-  fn ld_e_a(&mut self, _instr: u8) -> GbResult<()> {
+  fn ld_e_a(&mut self, _instr: u8) -> GbResult<u32> {
     self.de.lo = self.af.hi;
-    Ok(())
+    Ok(4)
   }
 
   /// LD H B
   ///
   /// Load B into H
   ///
+  /// Cycles: 4
+  ///
   /// Flags: - - - -
-  fn ld_h_b(&mut self, _instr: u8) -> GbResult<()> {
+  fn ld_h_b(&mut self, _instr: u8) -> GbResult<u32> {
     self.hl.hi = self.bc.hi;
-    Ok(())
+    Ok(4)
   }
 
   /// LD H C
   ///
   /// Load C into H
   ///
+  /// Cycles: 4
+  ///
   /// Flags: - - - -
-  fn ld_h_c(&mut self, _instr: u8) -> GbResult<()> {
+  fn ld_h_c(&mut self, _instr: u8) -> GbResult<u32> {
     self.hl.hi = self.bc.lo;
-    Ok(())
+    Ok(4)
   }
 
   /// LD H D
   ///
   /// Load D into H
   ///
+  /// Cycles: 4
+  ///
   /// Flags: - - - -
-  fn ld_h_d(&mut self, _instr: u8) -> GbResult<()> {
+  fn ld_h_d(&mut self, _instr: u8) -> GbResult<u32> {
     self.hl.hi = self.de.hi;
-    Ok(())
+    Ok(4)
   }
 
   /// LD H E
   ///
   /// Load E into H
   ///
+  /// Cycles: 4
+  ///
   /// Flags: - - - -
-  fn ld_h_e(&mut self, _instr: u8) -> GbResult<()> {
+  fn ld_h_e(&mut self, _instr: u8) -> GbResult<u32> {
     self.hl.hi = self.de.lo;
-    Ok(())
+    Ok(4)
   }
 
   /// LD H H
   ///
   /// Load H into H
   ///
+  /// Cycles: 4
+  ///
   /// Flags: - - - -
-  fn ld_h_h(&mut self, _instr: u8) -> GbResult<()> {
+  fn ld_h_h(&mut self, _instr: u8) -> GbResult<u32> {
     // nop
-    Ok(())
+    Ok(4)
   }
 
   /// LD H L
   ///
   /// Load L into H
   ///
+  /// Cycles: 4
+  ///
   /// Flags: - - - -
-  fn ld_h_l(&mut self, _instr: u8) -> GbResult<()> {
+  fn ld_h_l(&mut self, _instr: u8) -> GbResult<u32> {
     self.hl.hi = self.hl.lo;
-    Ok(())
+    Ok(4)
   }
 
   /// LD H (HL)
   ///
   /// Load val pointed to by HL into H
   ///
+  /// Cycles: 8
+  ///
   /// Flags: - - - -
-  fn ld_h__hl_(&mut self, _instr: u8) -> GbResult<()> {
+  fn ld_h__hl_(&mut self, _instr: u8) -> GbResult<u32> {
     self.hl.hi = self.bus.lazy_dref().read8(self.hl.hilo())?;
-    Ok(())
+    Ok(8)
   }
 
   /// LD H A
   ///
   /// Load A into H
   ///
+  /// Cycles: 4
+  ///
   /// Flags: - - - -
-  fn ld_h_a(&mut self, _instr: u8) -> GbResult<()> {
+  fn ld_h_a(&mut self, _instr: u8) -> GbResult<u32> {
     self.hl.hi = self.af.hi;
-    Ok(())
+    Ok(4)
   }
 
   /// LD L B
   ///
   /// Load B into L
   ///
+  /// Cycles: 4
+  ///
   /// Flags: - - - -
-  fn ld_l_b(&mut self, _instr: u8) -> GbResult<()> {
+  fn ld_l_b(&mut self, _instr: u8) -> GbResult<u32> {
     self.hl.lo = self.bc.hi;
-    Ok(())
+    Ok(4)
   }
 
   /// LD L C
   ///
   /// Load C into L
   ///
+  /// Cycles: 4
+  ///
   /// Flags: - - - -
-  fn ld_l_c(&mut self, _instr: u8) -> GbResult<()> {
+  fn ld_l_c(&mut self, _instr: u8) -> GbResult<u32> {
     self.hl.lo = self.bc.lo;
-    Ok(())
+    Ok(4)
   }
 
   /// LD L D
   ///
   /// Load D into L
   ///
+  /// Cycles: 4
+  ///
   /// Flags: - - - -
-  fn ld_l_d(&mut self, _instr: u8) -> GbResult<()> {
+  fn ld_l_d(&mut self, _instr: u8) -> GbResult<u32> {
     self.hl.lo = self.de.hi;
-    Ok(())
+    Ok(4)
   }
 
   /// LD L E
   ///
   /// Load E into L
   ///
+  /// Cycles: 4
+  ///
   /// Flags: - - - -
-  fn ld_l_e(&mut self, _instr: u8) -> GbResult<()> {
+  fn ld_l_e(&mut self, _instr: u8) -> GbResult<u32> {
     self.hl.lo = self.de.lo;
-    Ok(())
+    Ok(4)
   }
 
   /// LD L H
   ///
   /// Load H into L
   ///
+  /// Cycles: 4
+  ///
   /// Flags: - - - -
-  fn ld_l_h(&mut self, _instr: u8) -> GbResult<()> {
+  fn ld_l_h(&mut self, _instr: u8) -> GbResult<u32> {
     self.hl.lo = self.hl.hi;
-    Ok(())
+    Ok(4)
   }
 
   /// LD L L
   ///
   /// Load L into L
   ///
+  /// Cycles: 4
+  ///
   /// Flags: - - - -
-  fn ld_l_l(&mut self, _instr: u8) -> GbResult<()> {
+  fn ld_l_l(&mut self, _instr: u8) -> GbResult<u32> {
     // nop
-    Ok(())
+    Ok(4)
   }
 
   /// LD L (HL)
   ///
   /// Load value pointed by HL into L
   ///
+  /// Cycles: 8
+  ///
   /// Flags: - - - -
-  fn ld_l__hl_(&mut self, _instr: u8) -> GbResult<()> {
+  fn ld_l__hl_(&mut self, _instr: u8) -> GbResult<u32> {
     self.hl.lo = self.bus.lazy_dref().read8(self.hl.hilo())?;
-    Ok(())
+    Ok(8)
   }
 
   /// LD L A
   ///
   /// Load A into L
   ///
+  /// Cycles: 4
+  ///
   /// Flags: - - - -
-  fn ld_l_a(&mut self, _instr: u8) -> GbResult<()> {
+  fn ld_l_a(&mut self, _instr: u8) -> GbResult<u32> {
     self.hl.lo = self.af.hi;
-    Ok(())
+    Ok(4)
   }
 
   /// LD (HL) B
   ///
   /// Store B into address held by HL
   ///
+  /// Cycles: 8
+  ///
   /// Flags: - - - -
-  fn ld__hl__b(&mut self, _instr: u8) -> GbResult<()> {
-    self.bus.lazy_dref_mut().write8(self.hl.hilo(), self.bc.hi)
+  fn ld__hl__b(&mut self, _instr: u8) -> GbResult<u32> {
+    self
+      .bus
+      .lazy_dref_mut()
+      .write8(self.hl.hilo(), self.bc.hi)?;
+    Ok(8)
   }
 
   /// LD (HL) C
   ///
   /// Store C into address held by HL
   ///
+  /// Cycles: 8
+  ///
   /// Flags: - - - -
-  fn ld__hl__c(&mut self, _instr: u8) -> GbResult<()> {
-    self.bus.lazy_dref_mut().write8(self.hl.hilo(), self.bc.lo)
+  fn ld__hl__c(&mut self, _instr: u8) -> GbResult<u32> {
+    self
+      .bus
+      .lazy_dref_mut()
+      .write8(self.hl.hilo(), self.bc.lo)?;
+    Ok(8)
   }
 
   /// LD (HL) D
   ///
   /// Store D into address held by HL
   ///
+  /// Cycles: 8
+  ///
   /// Flags: - - - -
-  fn ld__hl__d(&mut self, _instr: u8) -> GbResult<()> {
-    self.bus.lazy_dref_mut().write8(self.hl.hilo(), self.de.hi)
+  fn ld__hl__d(&mut self, _instr: u8) -> GbResult<u32> {
+    self
+      .bus
+      .lazy_dref_mut()
+      .write8(self.hl.hilo(), self.de.hi)?;
+    Ok(8)
   }
 
   /// LD (HL) E
   ///
   /// Store E into address held by HL
   ///
+  /// Cycles: 8
+  ///
   /// Flags: - - - -
-  fn ld__hl__e(&mut self, _instr: u8) -> GbResult<()> {
-    self.bus.lazy_dref_mut().write8(self.hl.hilo(), self.de.lo)
+  fn ld__hl__e(&mut self, _instr: u8) -> GbResult<u32> {
+    self
+      .bus
+      .lazy_dref_mut()
+      .write8(self.hl.hilo(), self.de.lo)?;
+    Ok(8)
   }
 
   /// LD (HL) H
   ///
   /// Store H into address held by HL
   ///
+  /// Cycles: 8
+  ///
   /// Flags: - - - -
-  fn ld__hl__h(&mut self, _instr: u8) -> GbResult<()> {
-    self.bus.lazy_dref_mut().write8(self.hl.hilo(), self.hl.hi)
+  fn ld__hl__h(&mut self, _instr: u8) -> GbResult<u32> {
+    self
+      .bus
+      .lazy_dref_mut()
+      .write8(self.hl.hilo(), self.hl.hi)?;
+    Ok(8)
   }
 
   /// LD (HL) L
   ///
   /// Store L into address held by HL
   ///
+  /// Cycles: 8
+  ///
   /// Flags: - - - -
-  fn ld__hl__l(&mut self, _instr: u8) -> GbResult<()> {
-    self.bus.lazy_dref_mut().write8(self.hl.hilo(), self.hl.lo)
+  fn ld__hl__l(&mut self, _instr: u8) -> GbResult<u32> {
+    self
+      .bus
+      .lazy_dref_mut()
+      .write8(self.hl.hilo(), self.hl.lo)?;
+    Ok(8)
   }
 
   /// LD (HL) A
   ///
   /// Store A into address held by HL
   ///
+  /// Cycles: 8
+  ///
   /// Flags: - - - -
-  fn ld__hl__a(&mut self, _instr: u8) -> GbResult<()> {
-    self.bus.lazy_dref_mut().write8(self.hl.hilo(), self.af.hi)
+  fn ld__hl__a(&mut self, _instr: u8) -> GbResult<u32> {
+    self
+      .bus
+      .lazy_dref_mut()
+      .write8(self.hl.hilo(), self.af.hi)?;
+    Ok(8)
   }
 
   /// LD A B
   ///
   /// Load B into A
   ///
+  /// Cycles: 4
+  ///
   /// Flags: - - - -
-  fn ld_a_b(&mut self, _instr: u8) -> GbResult<()> {
+  fn ld_a_b(&mut self, _instr: u8) -> GbResult<u32> {
     self.af.hi = self.bc.hi;
-    Ok(())
+    Ok(4)
   }
 
   /// LD A C
   ///
   /// Load C into A
   ///
+  /// Cycles: 4
+  ///
   /// Flags: - - - -
-  fn ld_a_c(&mut self, _instr: u8) -> GbResult<()> {
+  fn ld_a_c(&mut self, _instr: u8) -> GbResult<u32> {
     self.af.hi = self.bc.lo;
-    Ok(())
+    Ok(4)
   }
 
   /// LD A D
   ///
   /// Load D into A
   ///
+  /// Cycles: 4
+  ///
   /// Flags: - - - -
-  fn ld_a_d(&mut self, _instr: u8) -> GbResult<()> {
+  fn ld_a_d(&mut self, _instr: u8) -> GbResult<u32> {
     self.af.hi = self.de.hi;
-    Ok(())
+    Ok(4)
   }
 
   /// LD A E
   ///
   /// Load E into A
   ///
+  /// Cycles: 4
+  ///
   /// Flags: - - - -
-  fn ld_a_e(&mut self, _instr: u8) -> GbResult<()> {
+  fn ld_a_e(&mut self, _instr: u8) -> GbResult<u32> {
     self.af.hi = self.de.lo;
-    Ok(())
+    Ok(4)
   }
 
   /// LD A H
   ///
   /// Load H into A
   ///
+  /// Cycles: 4
+  ///
   /// Flags: - - - -
-  fn ld_a_h(&mut self, _instr: u8) -> GbResult<()> {
+  fn ld_a_h(&mut self, _instr: u8) -> GbResult<u32> {
     self.af.hi = self.hl.hi;
-    Ok(())
+    Ok(4)
   }
 
   /// LD A L
   ///
   /// Load L into A
   ///
+  /// Cycles: 4
+  ///
   /// Flags: - - - -
-  fn ld_a_l(&mut self, _instr: u8) -> GbResult<()> {
+  fn ld_a_l(&mut self, _instr: u8) -> GbResult<u32> {
     self.af.hi = self.hl.lo;
-    Ok(())
+    Ok(4)
   }
 
   /// LD A (HL)
   ///
   /// Load value pointed to by HL into A
   ///
+  /// Cycles: 8
+  ///
   /// Flags: - - - -
-  fn ld_a__hl_(&mut self, _instr: u8) -> GbResult<()> {
+  fn ld_a__hl_(&mut self, _instr: u8) -> GbResult<u32> {
     self.af.hi = self.bus.lazy_dref().read8(self.hl.hilo())?;
-    Ok(())
+    Ok(8)
   }
 
   /// LD A A
   ///
   /// Load A into A
   ///
+  /// Cycles: 4
+  ///
   /// Flags: - - - -
-  fn ld_a_a(&mut self, _instr: u8) -> GbResult<()> {
+  fn ld_a_a(&mut self, _instr: u8) -> GbResult<u32> {
     // nop
-    Ok(())
+    Ok(4)
   }
 
   /// LD (C) A
   ///
   /// Load A into address 0xFF00 + C
   ///
+  /// Cycles: 8
+  ///
   /// Flags: - - - -
-  fn ld__c__a(&mut self, _instr: u8) -> GbResult<()> {
+  fn ld__c__a(&mut self, _instr: u8) -> GbResult<u32> {
     self
       .bus
       .lazy_dref_mut()
-      .write8(0xff00 + self.bc.lo as u16, self.af.hi)
+      .write8(0xff00 + self.bc.lo as u16, self.af.hi)?;
+    Ok(8)
   }
 
   /// LD (a16) A
   ///
   /// Store A into imm16 address
   ///
+  /// Cycles: 16
+  ///
   /// Flags: - - - -
-  fn ld__a16__a(&mut self, _instr: u8) -> GbResult<()> {
+  fn ld__a16__a(&mut self, _instr: u8) -> GbResult<u32> {
     let a16 = self.get_imm16()?;
-    self.bus.lazy_dref_mut().write8(a16, self.af.hi)
+    self.bus.lazy_dref_mut().write8(a16, self.af.hi)?;
+    Ok(16)
   }
 
   /// LD A (C)
   ///
   /// Load from 0xFF00 + C into A
   ///
+  /// Cycles: 8
+  ///
   /// Flags: - - - -
-  fn ld_a__c_(&mut self, _instr: u8) -> GbResult<()> {
+  fn ld_a__c_(&mut self, _instr: u8) -> GbResult<u32> {
     self.af.hi = self.bus.lazy_dref().read8(0xff00 + self.bc.lo as u16)?;
-    Ok(())
+    Ok(8)
   }
 
   /// LD SP HL
   ///
   /// Load HL into SP
   ///
+  /// Cycles: 8
+  ///
   /// Flags: - - - -
-  fn ld_sp_hl(&mut self, _instr: u8) -> GbResult<()> {
+  fn ld_sp_hl(&mut self, _instr: u8) -> GbResult<u32> {
     self.sp = self.hl.hilo();
-    Ok(())
+    Ok(8)
   }
 
   /// LD A (a16)
   ///
   /// Load value from provided address into A
   ///
+  /// Cycles: 16
+  ///
   /// Flags: - - - -
-  fn ld_a__a16_(&mut self, _instr: u8) -> GbResult<()> {
+  fn ld_a__a16_(&mut self, _instr: u8) -> GbResult<u32> {
     let a16 = self.get_imm16()?;
     self.af.hi = self.bus.lazy_dref().read8(a16)?;
-    Ok(())
+    Ok(16)
   }
 
   /// LD HL SP+r8
   ///
   /// Load SP + r8 into HL
   ///
+  /// Cycles: 12
+  ///
   /// Flags: 0 0 H C
-  fn ld_hl_sp_r8(&mut self, _instr: u8) -> GbResult<()> {
+  fn ld_hl_sp_r8(&mut self, _instr: u8) -> GbResult<u32> {
     // reset flags
     self.af.lo = 0;
 
@@ -1402,28 +1624,33 @@ impl Cpu {
     // update state
     self.af.lo |= carry | hcarry;
     self.hl.set_u16(self.sp.wrapping_add_signed(r8));
-    Ok(())
+    Ok(12)
   }
 
   /// LDH (a8) A
   ///
   /// Store A into 0xff00 + imm8
   ///
+  /// Cycles: 12
+  ///
   /// Flags: - - - -
-  fn ldh__a8__a(&mut self, _instr: u8) -> GbResult<()> {
+  fn ldh__a8__a(&mut self, _instr: u8) -> GbResult<u32> {
     let a8 = self.get_imm8()? as u16;
-    self.bus.lazy_dref_mut().write8(0xff00 + a8, self.af.hi)
+    self.bus.lazy_dref_mut().write8(0xff00 + a8, self.af.hi)?;
+    Ok(12)
   }
 
   /// LDH A (a8)
   ///
   /// Load from 0xff00 + imm8 into A
   ///
+  /// Cycles: 12
+  ///
   /// Flags: - - - -
-  fn ldh_a__a8_(&mut self, _instr: u8) -> GbResult<()> {
+  fn ldh_a__a8_(&mut self, _instr: u8) -> GbResult<u32> {
     let a8 = self.get_imm8()? as u16;
     self.af.hi = self.bus.lazy_dref().read8(0xff00 + a8)?;
-    Ok(())
+    Ok(12)
   }
 
   // *** ALU ***
@@ -1652,386 +1879,464 @@ impl Cpu {
   ///
   /// Increment the BC register.
   ///
+  /// Cycles: 8
+  ///
   /// Flags: - - - -
-  fn inc_bc(&mut self, _instr: u8) -> GbResult<()> {
+  fn inc_bc(&mut self, _instr: u8) -> GbResult<u32> {
     self.bc.set_u16(self.bc.hilo().wrapping_add(1));
-    Ok(())
+    Ok(8)
   }
 
   /// INC B
   ///
   /// Increment the B register
   ///
+  /// Cycles: 4
+  ///
   /// Flags: Z 0 H -
-  fn inc_b(&mut self, _instr: u8) -> GbResult<()> {
+  fn inc_b(&mut self, _instr: u8) -> GbResult<u32> {
     self.bc.hi = self.add_hc(self.bc.hi, 1);
-    Ok(())
+    Ok(4)
   }
 
   /// INC C
   ///
   /// Increment the C register
   ///
+  /// Cycles: 4
+  ///
   /// Flags: Z 0 H -
-  fn inc_c(&mut self, _instr: u8) -> GbResult<()> {
+  fn inc_c(&mut self, _instr: u8) -> GbResult<u32> {
     self.bc.lo = self.add_hc(self.bc.lo, 1);
-    Ok(())
+    Ok(4)
   }
 
   /// INC DE
   ///
-  /// Increment the DC register
+  /// Increment the DE register
+  ///
+  /// Cycles: 8
   ///
   /// Flags: - - - -
-  fn inc_de(&mut self, _instr: u8) -> GbResult<()> {
+  fn inc_de(&mut self, _instr: u8) -> GbResult<u32> {
     self.de.set_u16(self.de.hilo().wrapping_add(1));
-    Ok(())
+    Ok(8)
   }
 
   /// INC D
   ///
   /// Increment the D register
   ///
+  /// Cycles: 4
+  ///
   /// Flags: Z 0 H -
-  fn inc_d(&mut self, _instr: u8) -> GbResult<()> {
+  fn inc_d(&mut self, _instr: u8) -> GbResult<u32> {
     self.de.hi = self.add_hc(self.de.hi, 1);
-    Ok(())
+    Ok(4)
   }
 
   /// INC E
   ///
   /// Increment the E register
   ///
+  /// Cycles: 4
+  ///
   /// Flags: Z 0 H -
-  fn inc_e(&mut self, _instr: u8) -> GbResult<()> {
+  fn inc_e(&mut self, _instr: u8) -> GbResult<u32> {
     self.de.lo = self.add_hc(self.de.lo, 1);
-    Ok(())
+    Ok(4)
   }
 
   /// INC HL
   ///
   /// Increment the HL register
   ///
+  /// Cycles: 8
+  ///
   /// Flags: - - - -
-  fn inc_hl(&mut self, _instr: u8) -> GbResult<()> {
+  fn inc_hl(&mut self, _instr: u8) -> GbResult<u32> {
     self.hl.set_u16(self.hl.hilo().wrapping_add(1));
-    Ok(())
+    Ok(8)
   }
 
   /// INC H
   ///
   /// Increment the H register
   ///
+  /// Cycles: 4
+  ///
   /// Flags: Z 0 H -
-  fn inc_h(&mut self, _instr: u8) -> GbResult<()> {
+  fn inc_h(&mut self, _instr: u8) -> GbResult<u32> {
     self.hl.hi = self.add_hc(self.hl.hi, 1);
-    Ok(())
+    Ok(4)
   }
 
   /// INC L
   ///
   /// Increment the L register
   ///
+  /// Cycles: 4
+  ///
   /// Flags: Z 0 H -
-  fn inc_l(&mut self, _instr: u8) -> GbResult<()> {
+  fn inc_l(&mut self, _instr: u8) -> GbResult<u32> {
     self.hl.lo = self.add_hc(self.hl.lo, 1);
-    Ok(())
+    Ok(4)
   }
 
   /// INC (HL)
   ///
   /// Increment the value pointed by HL
   ///
+  /// Cycles: 12
+  ///
   /// Flags: Z 0 H -
-  fn inc__hl_(&mut self, _instr: u8) -> GbResult<()> {
+  fn inc__hl_(&mut self, _instr: u8) -> GbResult<u32> {
     let val = self.bus.lazy_dref().read8(self.hl.hilo())?;
     let val = self.add_hc(val, 1);
-    self.bus.lazy_dref_mut().write8(self.hl.hilo(), val)
+    self.bus.lazy_dref_mut().write8(self.hl.hilo(), val)?;
+    Ok(12)
   }
 
   /// INC SP
   ///
   /// Increment the SP register
   ///
+  /// Cycles: 8
+  ///
   /// Flags: - - - -
-  fn inc_sp(&mut self, _instr: u8) -> GbResult<()> {
+  fn inc_sp(&mut self, _instr: u8) -> GbResult<u32> {
     self.sp = self.sp.wrapping_add(1);
-    Ok(())
+    Ok(8)
   }
 
   /// INC A
   ///
   /// Increment the A register
   ///
+  /// Cycles: 4
+  ///
   /// Flags: Z 0 H -
-  fn inc_a(&mut self, _instr: u8) -> GbResult<()> {
+  fn inc_a(&mut self, _instr: u8) -> GbResult<u32> {
     self.af.hi = self.add_hc(self.af.hi, 1);
-    Ok(())
+    Ok(4)
   }
 
   /// DEC A
   ///
   /// Decrements the A register
   ///
+  /// Cycles: 4
+  ///
   /// Flags: Z 1 H -
-  fn dec_a(&mut self, _instr: u8) -> GbResult<()> {
+  fn dec_a(&mut self, _instr: u8) -> GbResult<u32> {
     self.af.hi = self.sub_hc(self.af.hi, 1);
-    Ok(())
+    Ok(4)
   }
 
   /// DEC B
   ///
   /// Decrements the B register
   ///
+  /// Cycles: 4
+  ///
   /// Flags: Z 1 H -
-  fn dec_b(&mut self, _instr: u8) -> GbResult<()> {
+  fn dec_b(&mut self, _instr: u8) -> GbResult<u32> {
     self.bc.hi = self.sub_hc(self.bc.hi, 1);
-    Ok(())
+    Ok(4)
   }
 
   /// DEC BC
   ///
   /// Decrements the BC register
   ///
+  /// Cycles: 8
+  ///
   /// Flags: - - - -
-  fn dec_bc(&mut self, _instr: u8) -> GbResult<()> {
+  fn dec_bc(&mut self, _instr: u8) -> GbResult<u32> {
     self.bc.set_u16(self.bc.hilo().wrapping_sub(1));
-    Ok(())
+    Ok(8)
   }
 
   /// DEC SP
   ///
   /// Decrements the SP register
   ///
+  /// Cycles: 8
+  ///
   /// Flags: - - - -
-  fn dec_sp(&mut self, _instr: u8) -> GbResult<()> {
+  fn dec_sp(&mut self, _instr: u8) -> GbResult<u32> {
     self.sp = self.sp.wrapping_sub(1);
-    Ok(())
+    Ok(8)
   }
 
   /// DEC C
   ///
   /// Decrements the C register
   ///
+  /// Cycles: 4
+  ///
   /// Flags: Z 1 H -
-  fn dec_c(&mut self, _instr: u8) -> GbResult<()> {
+  fn dec_c(&mut self, _instr: u8) -> GbResult<u32> {
     self.bc.lo = self.sub_hc(self.bc.lo, 1);
-    Ok(())
+    Ok(4)
   }
 
   /// DEC E
   ///
   /// Decrements the E register
   ///
+  /// Cycles: 4
+  ///
   /// Flags: Z 1 H -
-  fn dec_e(&mut self, _instr: u8) -> GbResult<()> {
+  fn dec_e(&mut self, _instr: u8) -> GbResult<u32> {
     self.de.lo = self.sub_hc(self.de.lo, 1);
-    Ok(())
+    Ok(4)
   }
 
   /// DEC L
   ///
   /// Decrements the L register
   ///
+  /// Cycles: 4
+  ///
   /// Flags: Z 1 H -
-  fn dec_l(&mut self, _instr: u8) -> GbResult<()> {
+  fn dec_l(&mut self, _instr: u8) -> GbResult<u32> {
     self.hl.lo = self.sub_hc(self.hl.lo, 1);
-    Ok(())
+    Ok(4)
   }
 
   /// DEC D
   ///
   /// Decrements the D register
   ///
+  /// Cycles: 4
+  ///
   /// Flags: Z 1 H -
-  fn dec_d(&mut self, _instr: u8) -> GbResult<()> {
+  fn dec_d(&mut self, _instr: u8) -> GbResult<u32> {
     self.de.hi = self.sub_hc(self.de.hi, 1);
-    Ok(())
+    Ok(4)
   }
 
   /// DEC H
   ///
   /// Decrements the H register
   ///
+  /// Cycles: 4
+  ///
   /// Flags: Z 1 H -
-  fn dec_h(&mut self, _instr: u8) -> GbResult<()> {
+  fn dec_h(&mut self, _instr: u8) -> GbResult<u32> {
     self.hl.hi = self.sub_hc(self.hl.hi, 1);
-    Ok(())
+    Ok(4)
   }
 
   /// DEC DE
   ///
   /// Decrements the DE register
   ///
+  /// Cycles: 8
+  ///
   /// Flags: - - - -
-  fn dec_de(&mut self, _instr: u8) -> GbResult<()> {
+  fn dec_de(&mut self, _instr: u8) -> GbResult<u32> {
     self.de.set_u16(self.de.hilo().wrapping_sub(1));
-    Ok(())
+    Ok(8)
   }
 
   /// DEC HL
   ///
   /// Decrements the HL register
   ///
+  /// Cycles: 8
+  ///
   /// Flags: - - - -
-  fn dec_hl(&mut self, _instr: u8) -> GbResult<()> {
+  fn dec_hl(&mut self, _instr: u8) -> GbResult<u32> {
     self.hl.set_u16(self.hl.hilo().wrapping_sub(1));
-    Ok(())
+    Ok(8)
   }
 
   /// DEC (HL)
   ///
   /// Decrements the value pointed to by HL
   ///
+  /// Cycles: 12
+  ///
   /// Flags: Z 1 H -
-  fn dec__hl_(&mut self, _instr: u8) -> GbResult<()> {
+  fn dec__hl_(&mut self, _instr: u8) -> GbResult<u32> {
     let val = self.bus.lazy_dref().read8(self.hl.hilo())?;
     let val = self.sub_hc(val, 1);
-    self.bus.lazy_dref_mut().write8(self.hl.hilo(), val)
+    self.bus.lazy_dref_mut().write8(self.hl.hilo(), val)?;
+    Ok(12)
   }
 
   /// ADD HL BC
   ///
   /// Add BC to HL and store into HL
   ///
+  /// Cycles: 8
+  ///
   /// Flags: - 0 H C
-  fn add_hl_bc(&mut self, _instr: u8) -> GbResult<()> {
+  fn add_hl_bc(&mut self, _instr: u8) -> GbResult<u32> {
     let res = self.add16(self.hl.hilo(), self.bc.hilo());
     self.hl.set_u16(res);
-    Ok(())
+    Ok(8)
   }
 
   /// ADD HL HL
   ///
   /// Add HL to HL and store into HL
   ///
+  /// Cycles: 8
+  ///
   /// Flags: - 0 H C
-  fn add_hl_hl(&mut self, _instr: u8) -> GbResult<()> {
+  fn add_hl_hl(&mut self, _instr: u8) -> GbResult<u32> {
     let res = self.add16(self.hl.hilo(), self.hl.hilo());
     self.hl.set_u16(res);
-    Ok(())
+    Ok(8)
   }
 
   /// ADD HL DE
   ///
   /// Add DE to HL and store into HL
   ///
+  /// Cycles: 8
+  ///
   /// Flags: - 0 H C
-  fn add_hl_de(&mut self, _instr: u8) -> GbResult<()> {
+  fn add_hl_de(&mut self, _instr: u8) -> GbResult<u32> {
     let res = self.add16(self.hl.hilo(), self.de.hilo());
     self.hl.set_u16(res);
-    Ok(())
+    Ok(8)
   }
 
   /// ADD HL SP
   ///
   /// Add SP to HL and store into HL
   ///
+  /// Cycles: 8
+  ///
   /// Flags: - 0 H C
-  fn add_hl_sp(&mut self, _instr: u8) -> GbResult<()> {
+  fn add_hl_sp(&mut self, _instr: u8) -> GbResult<u32> {
     let res = self.add16(self.hl.hilo(), self.sp);
     self.hl.set_u16(res);
-    Ok(())
+    Ok(8)
   }
 
   /// ADD A B
   ///
   /// Add B to A and store into A
   ///
+  /// Cycles: 4
+  ///
   /// Flags: Z 0 H C
-  fn add_a_b(&mut self, _instr: u8) -> GbResult<()> {
+  fn add_a_b(&mut self, _instr: u8) -> GbResult<u32> {
     self.af.hi = self.add8(self.af.hi, self.bc.hi);
-    Ok(())
+    Ok(4)
   }
 
   /// ADD A C
   ///
   /// Add C to A and store into A
   ///
+  /// Cycles: 4
+  ///
   /// Flags: Z 0 H C
-  fn add_a_c(&mut self, _instr: u8) -> GbResult<()> {
+  fn add_a_c(&mut self, _instr: u8) -> GbResult<u32> {
     self.af.hi = self.add8(self.af.hi, self.bc.lo);
-    Ok(())
+    Ok(4)
   }
 
   /// ADD A D
   ///
   /// Add D to A and store into A
   ///
+  /// Cycles: 4
+  ///
   /// Flags: Z 0 H C
-  fn add_a_d(&mut self, _instr: u8) -> GbResult<()> {
+  fn add_a_d(&mut self, _instr: u8) -> GbResult<u32> {
     self.af.hi = self.add8(self.af.hi, self.de.hi);
-    Ok(())
+    Ok(4)
   }
 
   /// ADD A E
   ///
   /// Add E to A and store into A
   ///
+  /// Cycles: 4
+  ///
   /// Flags: Z 0 H C
-  fn add_a_e(&mut self, _instr: u8) -> GbResult<()> {
+  fn add_a_e(&mut self, _instr: u8) -> GbResult<u32> {
     self.af.hi = self.add8(self.af.hi, self.de.lo);
-    Ok(())
+    Ok(4)
   }
 
   /// ADD A H
   ///
   /// Add H to A and store into A
   ///
+  /// Cycles: 4
+  ///
   /// Flags: Z 0 H C
-  fn add_a_h(&mut self, _instr: u8) -> GbResult<()> {
+  fn add_a_h(&mut self, _instr: u8) -> GbResult<u32> {
     self.af.hi = self.add8(self.af.hi, self.hl.hi);
-    Ok(())
+    Ok(4)
   }
 
   /// ADD A L
   ///
   /// Add L to A and store into A
   ///
+  /// Cycles: 4
+  ///
   /// Flags: Z 0 H C
-  fn add_a_l(&mut self, _instr: u8) -> GbResult<()> {
+  fn add_a_l(&mut self, _instr: u8) -> GbResult<u32> {
     self.af.hi = self.add8(self.af.hi, self.hl.lo);
-    Ok(())
+    Ok(4)
   }
 
   /// ADD A (HL)
   ///
   /// Add value pointed by HL to A and store into A
   ///
+  /// Cycles: 8
+  ///
   /// Flags: Z 0 H C
-  fn add_a__hl_(&mut self, _instr: u8) -> GbResult<()> {
+  fn add_a__hl_(&mut self, _instr: u8) -> GbResult<u32> {
     let val = self.bus.lazy_dref().read8(self.hl.hilo())?;
     self.af.hi = self.add8(self.af.hi, val);
-    Ok(())
+    Ok(8)
   }
 
   /// ADD A A
   ///
   /// Add A to A and store into A
   ///
+  /// Cycles: 4
+  ///
   /// Flags: Z 0 H C
-  fn add_a_a(&mut self, _instr: u8) -> GbResult<()> {
+  fn add_a_a(&mut self, _instr: u8) -> GbResult<u32> {
     self.af.hi = self.add8(self.af.hi, self.af.hi);
-    Ok(())
+    Ok(4)
   }
 
   /// ADD A d8
   ///
   /// Add imm8 with A and store into A
   ///
+  /// Cycles: 8
+  ///
   /// Flags: Z 0 H C
-  fn add_a_d8(&mut self, _instr: u8) -> GbResult<()> {
+  fn add_a_d8(&mut self, _instr: u8) -> GbResult<u32> {
     let d8 = self.get_imm8()?;
     self.af.hi = self.add8(self.af.hi, d8);
-    Ok(())
+    Ok(8)
   }
 
   /// ADD SP r8
   ///
   /// Add imm8 to SP and store into SP
   ///
+  /// Cycles: 16
+  ///
   /// Flags: 0 0 H C
-  fn add_sp_r8(&mut self, _instr: u8) -> GbResult<()> {
+  fn add_sp_r8(&mut self, _instr: u8) -> GbResult<u32> {
     // reset flags
     self.af.lo = 0;
 
@@ -2051,661 +2356,789 @@ impl Cpu {
     // update state
     self.af.lo |= carry | hcarry;
     self.sp = self.sp.wrapping_add_signed(r8);
-    Ok(())
+    Ok(16)
   }
 
   /// ADC A B
   ///
   /// Add B to A with Carry and store into A
   ///
+  /// Cycles: 4
+  ///
   /// Flags: Z 0 H C
-  fn adc_a_b(&mut self, _instr: u8) -> GbResult<()> {
+  fn adc_a_b(&mut self, _instr: u8) -> GbResult<u32> {
     self.af.hi = self.adc8(self.af.hi, self.bc.hi);
-    Ok(())
+    Ok(4)
   }
 
   /// ADC A C
   ///
   /// Add C to A with carry and store into A
   ///
+  /// Cycles: 4
+  ///
   /// Flags: Z 0 H C
-  fn adc_a_c(&mut self, _instr: u8) -> GbResult<()> {
+  fn adc_a_c(&mut self, _instr: u8) -> GbResult<u32> {
     self.af.hi = self.adc8(self.af.hi, self.bc.lo);
-    Ok(())
+    Ok(4)
   }
 
   /// ADC A D
   ///
   /// Add D to A with Carry and store into A
   ///
+  /// Cycles: 4
+  ///
   /// Flags: Z 0 H C
-  fn adc_a_d(&mut self, _instr: u8) -> GbResult<()> {
+  fn adc_a_d(&mut self, _instr: u8) -> GbResult<u32> {
     self.af.hi = self.adc8(self.af.hi, self.de.hi);
-    Ok(())
+    Ok(4)
   }
 
   /// ADC A E
   ///
   /// Add E to A with carry and store into A
   ///
+  /// Cycles: 4
+  ///
   /// Flags: Z 0 H C
-  fn adc_a_e(&mut self, _instr: u8) -> GbResult<()> {
+  fn adc_a_e(&mut self, _instr: u8) -> GbResult<u32> {
     self.af.hi = self.adc8(self.af.hi, self.de.lo);
-    Ok(())
+    Ok(4)
   }
 
   /// ADC A H
   ///
   /// Add A to H with carry and store into A
   ///
+  /// Cycles: 4
+  ///
   /// Flags: Z 0 H C
-  fn adc_a_h(&mut self, _instr: u8) -> GbResult<()> {
+  fn adc_a_h(&mut self, _instr: u8) -> GbResult<u32> {
     self.af.hi = self.adc8(self.af.hi, self.hl.hi);
-    Ok(())
+    Ok(4)
   }
 
   /// ADC A L
   ///
   /// Add L to A with carry and store into A
   ///
+  /// Cycles: 4
+  ///
   /// Flags: Z 0 H C
-  fn adc_a_l(&mut self, _instr: u8) -> GbResult<()> {
+  fn adc_a_l(&mut self, _instr: u8) -> GbResult<u32> {
     self.af.hi = self.adc8(self.af.hi, self.hl.lo);
-    Ok(())
+    Ok(4)
   }
 
   /// ADC A (HL)
   ///
   /// Add value pointed by HL to A and store into A
   ///
+  /// Cycles: 8
+  ///
   /// Flags: Z 0 H C
-  fn adc_a__hl_(&mut self, _instr: u8) -> GbResult<()> {
+  fn adc_a__hl_(&mut self, _instr: u8) -> GbResult<u32> {
     let val = self.bus.lazy_dref().read8(self.hl.hilo())?;
     self.af.hi = self.adc8(self.af.hi, val);
-    Ok(())
+    Ok(8)
   }
 
   /// ADC A A
   ///
   /// Add A to A with carry and store into A
   ///
+  /// Cycles: 4
+  ///
   /// Flags: Z 0 H C
-  fn adc_a_a(&mut self, _instr: u8) -> GbResult<()> {
+  fn adc_a_a(&mut self, _instr: u8) -> GbResult<u32> {
     self.af.hi = self.adc8(self.af.hi, self.af.hi);
-    Ok(())
+    Ok(4)
   }
 
   /// ADC A d8
   ///
   /// Add imm8 to A and store into A
   ///
+  /// Cycles: 8
+  ///
   /// Flags: Z 0 H C
-  fn adc_a_d8(&mut self, _instr: u8) -> GbResult<()> {
+  fn adc_a_d8(&mut self, _instr: u8) -> GbResult<u32> {
     let d8 = self.get_imm8()?;
     self.af.hi = self.adc8(self.af.hi, d8);
-    Ok(())
+    Ok(8)
   }
 
   /// SUB B
   ///
   /// Sub B from A and store into A
   ///
+  /// Cycles: 4
+  ///
   /// Flags: Z 1 H C
-  fn sub_b(&mut self, _instr: u8) -> GbResult<()> {
+  fn sub_b(&mut self, _instr: u8) -> GbResult<u32> {
     self.sub_r(self.bc.hi);
-    Ok(())
+    Ok(4)
   }
 
   /// SUB C
   ///
   /// Sub C from A and store into A
   ///
+  /// Cycles: 4
+  ///
   /// Flags: Z 1 H C
-  fn sub_c(&mut self, _instr: u8) -> GbResult<()> {
+  fn sub_c(&mut self, _instr: u8) -> GbResult<u32> {
     self.sub_r(self.bc.lo);
-    Ok(())
+    Ok(4)
   }
 
   /// SUB D
   ///
   /// Sub D from A and store into A
   ///
+  /// Cycles: 4
+  ///
   /// Flags: Z 1 H C
-  fn sub_d(&mut self, _instr: u8) -> GbResult<()> {
+  fn sub_d(&mut self, _instr: u8) -> GbResult<u32> {
     self.sub_r(self.de.hi);
-    Ok(())
+    Ok(4)
   }
 
   /// SUB E
   ///
   /// Sub E from A and store into A
   ///
+  /// Cycles: 4
+  ///
   /// Flags: Z 1 H C
-  fn sub_e(&mut self, _instr: u8) -> GbResult<()> {
+  fn sub_e(&mut self, _instr: u8) -> GbResult<u32> {
     self.sub_r(self.de.lo);
-    Ok(())
+    Ok(4)
   }
 
   /// SUB H
   ///
   /// Sub H from A and store into A
   ///
+  /// Cycles: 4
+  ///
   /// Flags: Z 1 H C
-  fn sub_h(&mut self, _instr: u8) -> GbResult<()> {
+  fn sub_h(&mut self, _instr: u8) -> GbResult<u32> {
     self.sub_r(self.hl.hi);
-    Ok(())
+    Ok(4)
   }
 
   /// SUB L
   ///
   /// Sub L from A and store into A
   ///
+  /// Cycles: 4
+  ///
   /// Flags: Z 1 H C
-  fn sub_l(&mut self, _instr: u8) -> GbResult<()> {
+  fn sub_l(&mut self, _instr: u8) -> GbResult<u32> {
     self.sub_r(self.hl.lo);
-    Ok(())
+    Ok(4)
   }
 
   /// SUB (HL)
   ///
   /// Sub val pointed to by HL and store into A
   ///
+  /// Cycles: 8
+  ///
   /// Flags: Z 1 H C
-  fn sub__hl_(&mut self, _instr: u8) -> GbResult<()> {
+  fn sub__hl_(&mut self, _instr: u8) -> GbResult<u32> {
     let val = self.bus.lazy_dref().read8(self.hl.hilo())?;
     self.sub_r(val);
-    Ok(())
+    Ok(8)
   }
 
   /// SUB A
   ///
   /// Sub A from A and store into A
   ///
+  /// Cycles: 4
+  ///
   /// Flags: Z 1 H C
-  fn sub_a(&mut self, _instr: u8) -> GbResult<()> {
+  fn sub_a(&mut self, _instr: u8) -> GbResult<u32> {
     self.sub_r(self.af.hi);
-    Ok(())
+    Ok(4)
   }
 
   /// SUB d8
   ///
   /// Sub imm8 from A and store into A
   ///
+  /// Cycles: 8
+  ///
   /// Flags: Z 1 H C
-  fn sub_d8(&mut self, _instr: u8) -> GbResult<()> {
+  fn sub_d8(&mut self, _instr: u8) -> GbResult<u32> {
     let d8 = self.get_imm8()?;
     self.sub_r(d8);
-    Ok(())
+    Ok(8)
   }
 
   /// SBC A B
   ///
   /// Sub B from A with carry and store into A
   ///
+  /// Cycles: 4
+  ///
   /// Flags: Z 1 H C
-  fn sbc_a_b(&mut self, _instr: u8) -> GbResult<()> {
+  fn sbc_a_b(&mut self, _instr: u8) -> GbResult<u32> {
     self.sbc_r(self.bc.hi);
-    Ok(())
+    Ok(4)
   }
 
   /// SBC A C
   ///
   /// Sub C from A with carry and store into A
   ///
+  /// Cycles: 4
+  ///
   /// Flags: Z 1 H C
-  fn sbc_a_c(&mut self, _instr: u8) -> GbResult<()> {
+  fn sbc_a_c(&mut self, _instr: u8) -> GbResult<u32> {
     self.sbc_r(self.bc.lo);
-    Ok(())
+    Ok(4)
   }
 
   /// SBC A D
   ///
   /// Sub D from A with carry and store into A
   ///
+  /// Cycles: 4
+  ///
   /// Flags: Z 1 H C
-  fn sbc_a_d(&mut self, _instr: u8) -> GbResult<()> {
+  fn sbc_a_d(&mut self, _instr: u8) -> GbResult<u32> {
     self.sbc_r(self.de.hi);
-    Ok(())
+    Ok(4)
   }
 
   /// SBC A E
   ///
   /// Sub E from A with carry and store into A
   ///
+  /// Cycles: 4
+  ///
   /// Flags: Z 1 H C
-  fn sbc_a_e(&mut self, _instr: u8) -> GbResult<()> {
+  fn sbc_a_e(&mut self, _instr: u8) -> GbResult<u32> {
     self.sbc_r(self.de.lo);
-    Ok(())
+    Ok(4)
   }
 
   /// SBC A H
   ///
   /// Sub H from A with carry and store into A
   ///
+  /// Cycles: 4
+  ///
   /// Flags: Z 1 H C
-  fn sbc_a_h(&mut self, _instr: u8) -> GbResult<()> {
+  fn sbc_a_h(&mut self, _instr: u8) -> GbResult<u32> {
     self.sbc_r(self.hl.hi);
-    Ok(())
+    Ok(4)
   }
 
   /// SBC A L
   ///
   /// Sub L from A with carry and store into A
   ///
+  /// Cycles: 4
+  ///
   /// Flags: Z 1 H C
-  fn sbc_a_l(&mut self, _instr: u8) -> GbResult<()> {
+  fn sbc_a_l(&mut self, _instr: u8) -> GbResult<u32> {
     self.sbc_r(self.hl.lo);
-    Ok(())
+    Ok(4)
   }
 
   /// SBC A (HL)
   ///
   /// Sub val pointed by HL with carry and store into A
   ///
+  /// Cycles: 8
+  ///
   /// Flags: Z 1 H C
-  fn sbc_a__hl_(&mut self, _instr: u8) -> GbResult<()> {
+  fn sbc_a__hl_(&mut self, _instr: u8) -> GbResult<u32> {
     // TODO: this is broken?
     let val = self.bus.lazy_dref().read8(self.hl.hilo())?;
     self.sbc_r(val);
-    Ok(())
+    Ok(8)
   }
 
   /// SBC A A
   ///
   /// Sub A from A with carry and store into A
   ///
+  /// Cycles: 4
+  ///
   /// Flags: Z 1 H C
-  fn sbc_a_a(&mut self, _instr: u8) -> GbResult<()> {
+  fn sbc_a_a(&mut self, _instr: u8) -> GbResult<u32> {
     self.sbc_r(self.af.hi);
-    Ok(())
+    Ok(4)
   }
 
   /// SBC A d8
   ///
   /// Sub imm8 from A and store into A
   ///
+  /// Cycles: 8
+  ///
   /// Flags: Z 1 H C
-  fn sbc_a_d8(&mut self, _instr: u8) -> GbResult<()> {
+  fn sbc_a_d8(&mut self, _instr: u8) -> GbResult<u32> {
     // TODO: this is broken?
     let d8 = self.get_imm8()?;
     self.sbc_r(d8);
-    Ok(())
+    Ok(8)
   }
 
   /// AND B
   ///
   /// AND B with A and store into A
   ///
+  /// Cycles: 4
+  ///
   /// Flags: Z 0 1 0
-  fn and_b(&mut self, _instr: u8) -> GbResult<()> {
+  fn and_b(&mut self, _instr: u8) -> GbResult<u32> {
     self.and_r(self.bc.hi);
-    Ok(())
+    Ok(4)
   }
 
   /// AND C
   ///
   /// AND C with A and store into A
   ///
+  /// Cycles: 4
+  ///
   /// Flags: Z 0 1 0
-  fn and_c(&mut self, _instr: u8) -> GbResult<()> {
+  fn and_c(&mut self, _instr: u8) -> GbResult<u32> {
     self.and_r(self.bc.lo);
-    Ok(())
+    Ok(4)
   }
 
   /// AND D
   ///
   /// AND D with A and store into A
   ///
+  /// Cycles: 4
+  ///
   /// Flags: Z 0 1 0
-  fn and_d(&mut self, _instr: u8) -> GbResult<()> {
+  fn and_d(&mut self, _instr: u8) -> GbResult<u32> {
     self.and_r(self.de.hi);
-    Ok(())
+    Ok(4)
   }
 
   /// AND E
   ///
   /// AND E with A and store into A
   ///
+  /// Cycles: 4
+  ///
   /// Flags: Z 0 1 0
-  fn and_e(&mut self, _instr: u8) -> GbResult<()> {
+  fn and_e(&mut self, _instr: u8) -> GbResult<u32> {
     self.and_r(self.de.lo);
-    Ok(())
+    Ok(4)
   }
 
   /// AND H
   ///
   /// AND H with A and store into A
   ///
+  /// Cycles: 4
+  ///
   /// Flags: Z 0 1 0
-  fn and_h(&mut self, _instr: u8) -> GbResult<()> {
+  fn and_h(&mut self, _instr: u8) -> GbResult<u32> {
     self.and_r(self.hl.hi);
-    Ok(())
+    Ok(4)
   }
 
   /// AND L
   ///
   /// AND L with A and store into A
   ///
+  /// Cycles: 4
+  ///
   /// Flags: Z 0 1 0
-  fn and_l(&mut self, _instr: u8) -> GbResult<()> {
+  fn and_l(&mut self, _instr: u8) -> GbResult<u32> {
     self.and_r(self.hl.lo);
-    Ok(())
+    Ok(4)
   }
 
   /// AND (HL)
   ///
   /// AND val pointed by HL with A and store into A
   ///
+  /// Cycles: 8
+  ///
   /// Flags: Z 0 1 0
-  fn and__hl_(&mut self, _instr: u8) -> GbResult<()> {
+  fn and__hl_(&mut self, _instr: u8) -> GbResult<u32> {
     let val = self.bus.lazy_dref().read8(self.hl.hilo())?;
     self.and_r(val);
-    Ok(())
+    Ok(8)
   }
 
   /// AND A
   ///
   /// AND A with A and store into A
   ///
+  /// Cycles: 4
+  ///
   /// Flags: Z 0 1 0
-  fn and_a(&mut self, _instr: u8) -> GbResult<()> {
+  fn and_a(&mut self, _instr: u8) -> GbResult<u32> {
     self.and_r(self.af.hi);
-    Ok(())
+    Ok(4)
   }
 
   /// AND d8
   ///
   /// AND imm8 with A and store into A
   ///
+  /// Cycles: 8
+  ///
   /// Flags: Z 0 1 0
-  fn and_d8(&mut self, _instr: u8) -> GbResult<()> {
+  fn and_d8(&mut self, _instr: u8) -> GbResult<u32> {
     let d8 = self.get_imm8()?;
     self.and_r(d8);
-    Ok(())
+    Ok(8)
   }
 
   /// XOR B
   ///
   /// XOR B with A and store into A
   ///
+  /// Cycles: 4
+  ///
   /// Flags: Z 0 0 0
-  fn xor_b(&mut self, _instr: u8) -> GbResult<()> {
+  fn xor_b(&mut self, _instr: u8) -> GbResult<u32> {
     self.xor_r(self.bc.hi);
-    Ok(())
+    Ok(4)
   }
 
   /// XOR C
   ///
   /// XOR C with A and store into A
   ///
+  /// Cycles: 4
+  ///
   /// Flags: Z 0 0 0
-  fn xor_c(&mut self, _instr: u8) -> GbResult<()> {
+  fn xor_c(&mut self, _instr: u8) -> GbResult<u32> {
     self.xor_r(self.bc.lo);
-    Ok(())
+    Ok(4)
   }
 
   /// XOR D
   ///
   /// XOR D with A and store into A
   ///
+  /// Cycles: 4
+  ///
   /// Flags: Z 0 0 0
-  fn xor_d(&mut self, _instr: u8) -> GbResult<()> {
+  fn xor_d(&mut self, _instr: u8) -> GbResult<u32> {
     self.xor_r(self.de.hi);
-    Ok(())
+    Ok(4)
   }
 
   /// XOR E
   ///
   /// XOR E with A and store into A
   ///
+  /// Cycles: 4
+  ///
   /// Flags: Z 0 0 0
-  fn xor_e(&mut self, _instr: u8) -> GbResult<()> {
+  fn xor_e(&mut self, _instr: u8) -> GbResult<u32> {
     self.xor_r(self.de.lo);
-    Ok(())
+    Ok(4)
   }
 
   /// XOR H
   ///
   /// XOR H with A and store into A
   ///
+  /// Cycles: 4
+  ///
   /// Flags: Z 0 0 0
-  fn xor_h(&mut self, _instr: u8) -> GbResult<()> {
+  fn xor_h(&mut self, _instr: u8) -> GbResult<u32> {
     self.xor_r(self.hl.hi);
-    Ok(())
+    Ok(4)
   }
 
   /// XOR L
   ///
   /// XOR L with A and store into A
   ///
+  /// Cycles: 4
+  ///
   /// Flags: Z 0 0 0
-  fn xor_l(&mut self, _instr: u8) -> GbResult<()> {
+  fn xor_l(&mut self, _instr: u8) -> GbResult<u32> {
     self.xor_r(self.hl.lo);
-    Ok(())
+    Ok(4)
   }
 
   /// XOR (HL)
   ///
   /// XOR val pointed by HL with A and store into A
   ///
+  /// Cycles: 8
+  ///
   /// Flags: Z 0 0 0
-  fn xor__hl_(&mut self, _instr: u8) -> GbResult<()> {
+  fn xor__hl_(&mut self, _instr: u8) -> GbResult<u32> {
     let val = self.bus.lazy_dref().read8(self.hl.hilo())?;
     self.xor_r(val);
-    Ok(())
+    Ok(8)
   }
 
   /// XOR A
   ///
   /// XOR A with A and store into A
   ///
+  /// Cycles: 4
+  ///
   /// Flags Z 0 0 0
-  fn xor_a(&mut self, _instr: u8) -> GbResult<()> {
+  fn xor_a(&mut self, _instr: u8) -> GbResult<u32> {
     self.xor_r(self.af.hi);
-    Ok(())
+    Ok(4)
   }
 
   /// XOR d8
   ///
   /// XOR imm8 with A and store into A
   ///
+  /// Cycles: 8
+  ///
   /// Flags: Z 0 0 0
-  fn xor_d8(&mut self, _instr: u8) -> GbResult<()> {
+  fn xor_d8(&mut self, _instr: u8) -> GbResult<u32> {
     let d8 = self.get_imm8()?;
     self.xor_r(d8);
-    Ok(())
+    Ok(8)
   }
 
   /// OR B
   ///
   /// OR B with A and store into A
   ///
+  /// Cycles: 4
+  ///
   /// Flags: Z 0 0 0
-  fn or_b(&mut self, _instr: u8) -> GbResult<()> {
+  fn or_b(&mut self, _instr: u8) -> GbResult<u32> {
     self.or_r(self.bc.hi);
-    Ok(())
+    Ok(4)
   }
 
   /// OR C
   ///
   /// OR C with A and store into A
   ///
+  /// Cycles: 4
+  ///
   /// Flags: Z 0 0 0
-  fn or_c(&mut self, _instr: u8) -> GbResult<()> {
+  fn or_c(&mut self, _instr: u8) -> GbResult<u32> {
     self.or_r(self.bc.lo);
-    Ok(())
+    Ok(4)
   }
 
   /// OR D
   ///
   /// OR D with A and store into A
   ///
+  /// Cycles: 4
+  ///
   /// Flags: Z 0 0 0
-  fn or_d(&mut self, _instr: u8) -> GbResult<()> {
+  fn or_d(&mut self, _instr: u8) -> GbResult<u32> {
     self.or_r(self.de.hi);
-    Ok(())
+    Ok(4)
   }
 
   /// OR E
   ///
   /// OR E with A and store into A
   ///
+  /// Cycles: 4
+  ///
   /// Flags: Z 0 0 0
-  fn or_e(&mut self, _instr: u8) -> GbResult<()> {
+  fn or_e(&mut self, _instr: u8) -> GbResult<u32> {
     self.or_r(self.de.lo);
-    Ok(())
+    Ok(4)
   }
 
   /// OR H
   ///
   /// OR H with A and store into A
   ///
+  /// Cycles: 4
+  ///
   /// Flags: Z 0 0 0
-  fn or_h(&mut self, _instr: u8) -> GbResult<()> {
+  fn or_h(&mut self, _instr: u8) -> GbResult<u32> {
     self.or_r(self.hl.hi);
-    Ok(())
+    Ok(4)
   }
 
   /// OR L
   ///
   /// OR L with A and store into A
   ///
+  /// Cycles: 4
+  ///
   /// Flags: Z 0 0 0
-  fn or_l(&mut self, _instr: u8) -> GbResult<()> {
+  fn or_l(&mut self, _instr: u8) -> GbResult<u32> {
     self.or_r(self.hl.lo);
-    Ok(())
+    Ok(4)
   }
 
   /// OR (HL)
   ///
   /// OR val pointed by HL with A and store into A
   ///
+  /// Cycles: 8
+  ///
   /// Flags: Z 0 0 0
-  fn or__hl_(&mut self, _instr: u8) -> GbResult<()> {
+  fn or__hl_(&mut self, _instr: u8) -> GbResult<u32> {
     let val = self.bus.lazy_dref().read8(self.hl.hilo())?;
     self.or_r(val);
-    Ok(())
+    Ok(8)
   }
 
   /// OR A
   ///
   /// OR A with A and store into A
   ///
+  /// Cycles: 4
+  ///
   /// Flags: Z 0 0 0
-  fn or_a(&mut self, _instr: u8) -> GbResult<()> {
+  fn or_a(&mut self, _instr: u8) -> GbResult<u32> {
     self.or_r(self.af.hi);
-    Ok(())
+    Ok(4)
   }
 
   /// OR d8
   ///
   /// OR imm8 with A and store into A
   ///
+  /// Cycles: 8
+  ///
   /// Flags: Z 0 0 0
-  fn or_d8(&mut self, _instr: u8) -> GbResult<()> {
+  fn or_d8(&mut self, _instr: u8) -> GbResult<u32> {
     let d8 = self.get_imm8()?;
     self.or_r(d8);
-    Ok(())
+    Ok(8)
   }
 
   /// CP B
   ///
   /// Compare B with A
   ///
+  /// Cycles: 4
+  ///
   /// Flags: Z 1 H C
-  fn cp_b(&mut self, _instr: u8) -> GbResult<()> {
+  fn cp_b(&mut self, _instr: u8) -> GbResult<u32> {
     self.cp_r(self.bc.hi);
-    Ok(())
+    Ok(4)
   }
 
   /// CP C
   ///
   /// Compare C with A
   ///
+  /// Cycles: 4
+  ///
   /// Flags: Z 1 H C
-  fn cp_c(&mut self, _instr: u8) -> GbResult<()> {
+  fn cp_c(&mut self, _instr: u8) -> GbResult<u32> {
     self.cp_r(self.bc.lo);
-    Ok(())
+    Ok(4)
   }
 
   /// CP D
   ///
   /// Compare D with A
   ///
+  /// Cycles: 4
+  ///
   /// Flags: Z 1 H C
-  fn cp_d(&mut self, _instr: u8) -> GbResult<()> {
+  fn cp_d(&mut self, _instr: u8) -> GbResult<u32> {
     self.cp_r(self.de.hi);
-    Ok(())
+    Ok(4)
   }
 
   /// CP E
   ///
   /// Compare E with A
   ///
+  /// Cycles: 4
+  ///
   /// Flags: Z 1 H C
-  fn cp_e(&mut self, _instr: u8) -> GbResult<()> {
+  fn cp_e(&mut self, _instr: u8) -> GbResult<u32> {
     self.cp_r(self.de.lo);
-    Ok(())
+    Ok(4)
   }
 
   /// CP H
   ///
   /// Compare H with A
   ///
+  /// Cycles: 4
+  ///
   /// Flags: Z 1 H C
-  fn cp_h(&mut self, _instr: u8) -> GbResult<()> {
+  fn cp_h(&mut self, _instr: u8) -> GbResult<u32> {
     self.cp_r(self.hl.hi);
-    Ok(())
+    Ok(4)
   }
 
   /// CP L
   ///
   /// Compare L with A
   ///
+  /// Cycles: 4
+  ///
   /// Flags: Z 1 H C
-  fn cp_l(&mut self, _instr: u8) -> GbResult<()> {
+  fn cp_l(&mut self, _instr: u8) -> GbResult<u32> {
     self.cp_r(self.hl.lo);
-    Ok(())
+    Ok(4)
   }
 
   /// CP (HL)
   ///
   /// Compare val pointed by HL with A
   ///
+  /// Cycles: 8
+  ///
   /// Flags: Z 1 H C
-  fn cp__hl_(&mut self, _instr: u8) -> GbResult<()> {
+  fn cp__hl_(&mut self, _instr: u8) -> GbResult<u32> {
     let val = self.bus.lazy_dref().read8(self.hl.hilo())?;
     self.cp_r(val);
-    Ok(())
+    Ok(4)
   }
 
   /// CP A
   ///
   /// Compare A with A
   ///
+  /// Cycles: 4
+  ///
   /// Flags: Z 1 H C
-  fn cp_a(&mut self, _instr: u8) -> GbResult<()> {
+  fn cp_a(&mut self, _instr: u8) -> GbResult<u32> {
     self.cp_r(self.af.hi);
-    Ok(())
+    Ok(4)
   }
 
   /// CP d8
   ///
   /// Compare imm8 with A
   ///
+  /// Cycles: 8
+  ///
   /// Flags: Z 1 H C
-  fn cp_d8(&mut self, _instr: u8) -> GbResult<()> {
+  fn cp_d8(&mut self, _instr: u8) -> GbResult<u32> {
     let d8 = self.get_imm8()?;
     self.cp_r(d8);
-    Ok(())
+    Ok(8)
   }
 
   /// RLCA
   ///
   /// Rotate A register Left
   ///
+  /// Cycles: 4
+  ///
   /// Flags: 0 0 0 C
-  fn rlca(&mut self, _instr: u8) -> GbResult<()> {
+  fn rlca(&mut self, _instr: u8) -> GbResult<u32> {
     // reset flags
     self.af.lo = 0;
     let bit7 = self.af.hi & 0x80;
@@ -2717,15 +3150,17 @@ impl Cpu {
     // set carry flag
     self.af.lo |= carry;
 
-    Ok(())
+    Ok(4)
   }
 
   /// RRCA
   ///
   /// Rotate A register right
   ///
+  /// Cycles: 4
+  ///
   /// Flags: 0 0 0 C
-  fn rrca(&mut self, _instr: u8) -> GbResult<()> {
+  fn rrca(&mut self, _instr: u8) -> GbResult<u32> {
     // reset flags
     self.af.lo = 0;
     let bit0 = self.af.hi & 0x01;
@@ -2737,15 +3172,17 @@ impl Cpu {
     // set carry flag
     self.af.lo |= carry;
 
-    Ok(())
+    Ok(4)
   }
 
   /// RLA
   ///
   /// Rotate A register left through carry
   ///
+  /// Cycles: 4
+  ///
   /// Flags: 0 0 0 C
-  fn rla(&mut self, _instr: u8) -> GbResult<()> {
+  fn rla(&mut self, _instr: u8) -> GbResult<u32> {
     let bit_carry = (self.af.lo & FLAG_C > 0) as u8;
     // reset flags
     self.af.lo = 0;
@@ -2758,15 +3195,17 @@ impl Cpu {
     // set carry flag
     self.af.lo |= carry;
 
-    Ok(())
+    Ok(4)
   }
 
   /// RRA
   ///
   /// Rotate A register right through carry
   ///
+  /// Cycles: 4
+  ///
   /// Flags: 0 0 0 C
-  fn rra(&mut self, _instr: u8) -> GbResult<()> {
+  fn rra(&mut self, _instr: u8) -> GbResult<u32> {
     let bit_carry = (self.af.lo & FLAG_C > 0) as u8;
     // reset flags
     self.af.lo = 0;
@@ -2779,15 +3218,17 @@ impl Cpu {
     // set carry flag
     self.af.lo |= carry;
 
-    Ok(())
+    Ok(4)
   }
 
   /// DAA
   ///
   /// Decimal adjust A
   ///
+  /// Cycles: 4
+  ///
   /// Flags: Z - 0 C
-  fn daa(&mut self, _instr: u8) -> GbResult<()> {
+  fn daa(&mut self, _instr: u8) -> GbResult<u32> {
     // decimal adjust logic for the gameboy cpu taken from
     // https://forums.nesdev.org/viewtopic.php?p=196282&sid=84ae40d1166afc4bda3ff926f30c2d24#p196282
 
@@ -2820,62 +3261,72 @@ impl Cpu {
       self.af.lo &= !FLAG_Z;
     }
     self.af.lo &= !FLAG_H;
-    Ok(())
+    Ok(4)
   }
 
   /// CPL
   ///
   /// Compliment of A
   ///
+  /// Cycles: 4
+  ///
   /// Flags: 0 1 1 0
-  fn cpl(&mut self, _instr: u8) -> GbResult<()> {
+  fn cpl(&mut self, _instr: u8) -> GbResult<u32> {
     self.af.lo = (FLAG_N | FLAG_H);
     self.af.hi ^= 0xff;
-    Ok(())
+    Ok(4)
   }
 
   /// SCF
   ///
   /// Set carry flag
   ///
+  /// Cycles: 4
+  ///
   /// Flags: - 0 0 1
-  fn scf(&mut self, _instr: u8) -> GbResult<()> {
+  fn scf(&mut self, _instr: u8) -> GbResult<u32> {
     // only keep Z flag
     self.af.lo &= FLAG_Z;
     self.af.lo |= FLAG_C;
-    Ok(())
+    Ok(4)
   }
 
   /// CCF
   ///
   /// Toggle carry flag
   ///
+  /// Cycles: 4
+  ///
   /// Flags: - 0 0 C
-  fn ccf(&mut self, _instr: u8) -> GbResult<()> {
+  fn ccf(&mut self, _instr: u8) -> GbResult<u32> {
     // only keep Z flags
     self.af.lo &= FLAG_Z;
     self.af.lo ^= FLAG_C;
-    Ok(())
+    Ok(4)
   }
 
   // *** Branch/Jumps ***
 
-  fn jr_flag_r8(&mut self, flag: u8, test_set: bool) -> GbResult<()> {
+  fn jr_flag_r8(&mut self, flag: u8, test_set: bool) -> GbResult<bool> {
+    let mut jumped = false;
     let r8 = self.get_imm8()? as i8;
     if (test_set && (self.af.lo & flag != 0)) || (!test_set && (self.af.lo & flag == 0)) {
       // now jump!
       self.pc = self.pc.wrapping_add_signed(r8 as i16);
+      jumped = true;
     }
-    Ok(())
+    Ok(jumped)
   }
 
-  fn jp_flag_a16(&mut self, flag: u8, test_set: bool) -> GbResult<()> {
+  fn jp_flag_a16(&mut self, flag: u8, test_set: bool) -> GbResult<bool> {
+    let mut branch_taken = false;
     let a16 = self.get_imm16()?;
     if (test_set && (self.af.lo & flag != 0)) || (!test_set && (self.af.lo & flag == 0)) {
       // now jump!
       self.pc = a16;
+      branch_taken = true;
     }
-    Ok(())
+    Ok(branch_taken)
   }
 
   fn call(&mut self, a16: u16) -> GbResult<()> {
@@ -2885,321 +3336,435 @@ impl Cpu {
     Ok(())
   }
 
-  fn call_flag_a16(&mut self, flag: u8, test_set: bool) -> GbResult<()> {
+  fn call_flag_a16(&mut self, flag: u8, test_set: bool) -> GbResult<bool> {
+    let mut branch_taken = false;
     let a16 = self.get_imm16()?;
     if (test_set && (self.af.lo & flag != 0)) || (!test_set && (self.af.lo & flag == 0)) {
       // now jump!
       self.call(a16)?;
+      branch_taken = true;
     }
-    Ok(())
+    Ok(branch_taken)
   }
 
-  fn ret_flag(&mut self, flag: u8, test_set: bool) -> GbResult<()> {
+  fn ret_flag(&mut self, flag: u8, test_set: bool) -> GbResult<bool> {
+    let mut branch_taken = false;
     if (test_set && (self.af.lo & flag != 0)) || (!test_set && (self.af.lo & flag == 0)) {
       self.pc = self.bus.lazy_dref().read16(self.sp)?;
       self.sp = self.sp.wrapping_add(2);
+      branch_taken = true;
     }
-    Ok(())
+    Ok(branch_taken)
   }
 
   /// JR r8
   ///
   /// Jump to PC + r8 (signed)
   ///
+  /// Cycles: 12
+  ///
   /// Flags: - - - -
-  fn jr_r8(&mut self, _instr: u8) -> GbResult<()> {
+  fn jr_r8(&mut self, _instr: u8) -> GbResult<u32> {
     // always jump
     self.jr_flag_r8(0, false)?;
-    Ok(())
+    Ok(12)
   }
 
   /// JR NZ r8
   ///
   /// jump to PC + r8 (signed) if Z flag cleared
   ///
+  /// Cycles: 12/8
+  ///
   /// Flags: - - - -
-  fn jr_nz_r8(&mut self, _instr: u8) -> GbResult<()> {
-    self.jr_flag_r8(FLAG_Z, false)?;
-    Ok(())
+  fn jr_nz_r8(&mut self, _instr: u8) -> GbResult<u32> {
+    let cycles = if self.jr_flag_r8(FLAG_Z, false)? {
+      12
+    } else {
+      8
+    };
+    Ok(cycles)
   }
 
   /// JR Z r8
   ///
   /// jump to PC + r8 (signed) if Z flag set
   ///
+  /// Cycles: 12/8
+  ///
   /// Flags: - - - -
-  fn jr_z_r8(&mut self, _instr: u8) -> GbResult<()> {
-    self.jr_flag_r8(FLAG_Z, true)?;
-    Ok(())
+  fn jr_z_r8(&mut self, _instr: u8) -> GbResult<u32> {
+    let cycles = if self.jr_flag_r8(FLAG_Z, true)? {
+      12
+    } else {
+      8
+    };
+    Ok(cycles)
   }
 
   /// JR NC r8
   ///
   /// jump to PC + r8 (signed) if C flag cleared
   ///
+  /// Cycles: 12/8
+  ///
   /// Flags: - - - -
-  fn jr_nc_r8(&mut self, _instr: u8) -> GbResult<()> {
-    self.jr_flag_r8(FLAG_C, false)?;
-    Ok(())
+  fn jr_nc_r8(&mut self, _instr: u8) -> GbResult<u32> {
+    let cycles = if self.jr_flag_r8(FLAG_C, false)? {
+      12
+    } else {
+      8
+    };
+    Ok(cycles)
   }
 
   /// JR C r8
   ///
   /// jump to PC + r8 (signed) if C flag set
   ///
+  /// Cycles: 12/8
+  ///
   /// Flags: - - - -
-  fn jr_c_r8(&mut self, _instr: u8) -> GbResult<()> {
-    self.jr_flag_r8(FLAG_C, true)?;
-    Ok(())
+  fn jr_c_r8(&mut self, _instr: u8) -> GbResult<u32> {
+    let cycles = if self.jr_flag_r8(FLAG_C, true)? {
+      12
+    } else {
+      8
+    };
+    Ok(cycles)
   }
 
   /// JP NZ a16
   ///
   /// jump to imm16 if Z flag cleared
   ///
+  /// Cycles: 16/12
+  ///
   /// Flags: - - - -
-  fn jp_nz_a16(&mut self, _instr: u8) -> GbResult<()> {
-    self.jp_flag_a16(FLAG_Z, false)?;
-    Ok(())
+  fn jp_nz_a16(&mut self, _instr: u8) -> GbResult<u32> {
+    let cycles = if self.jp_flag_a16(FLAG_Z, false)? {
+      16
+    } else {
+      12
+    };
+    Ok(cycles)
   }
 
   /// JP a16
   ///
   /// jump to imm16
   ///
+  /// Cycles: 16
+  ///
   /// Flags: - - - -
-  fn jp_a16(&mut self, _instr: u8) -> GbResult<()> {
+  fn jp_a16(&mut self, _instr: u8) -> GbResult<u32> {
     // always jump
     self.jp_flag_a16(0, false)?;
-    Ok(())
+    Ok(16)
   }
 
   /// JP Z a16
   ///
   /// jump to imm16 if Z flag set
   ///
+  /// Cycles: 16/12
+  ///
   /// Flags: - - - -
-  fn jp_z_a16(&mut self, _instr: u8) -> GbResult<()> {
-    self.jp_flag_a16(FLAG_Z, true)?;
-    Ok(())
+  fn jp_z_a16(&mut self, _instr: u8) -> GbResult<u32> {
+    let cycles = if self.jp_flag_a16(FLAG_Z, true)? {
+      16
+    } else {
+      12
+    };
+    Ok(cycles)
   }
 
   /// JP NC a16
   ///
   /// jump to imm16 if C flag cleared
   ///
+  /// Cycles: 16
+  ///
   /// Flags: - - - -
-  fn jp_nc_a16(&mut self, _instr: u8) -> GbResult<()> {
+  fn jp_nc_a16(&mut self, _instr: u8) -> GbResult<u32> {
     self.jp_flag_a16(FLAG_C, false)?;
-    Ok(())
+    Ok(16)
   }
 
   /// JP C a16
   ///
   /// jump to imm16 if C flag set
   ///
+  /// Cycles: 16/12
+  ///
   /// Flags: - - - -
-  fn jp_c_a16(&mut self, _instr: u8) -> GbResult<()> {
-    self.jp_flag_a16(FLAG_C, true)?;
-    Ok(())
+  fn jp_c_a16(&mut self, _instr: u8) -> GbResult<u32> {
+    let cycles = if self.jp_flag_a16(FLAG_C, true)? {
+      16
+    } else {
+      12
+    };
+    Ok(cycles)
   }
 
   /// JP (HL)
   ///
   /// jump to address held by HL
   ///
+  /// Cycles: 4
+  ///
   /// Flags: - - - -
-  fn jp__hl_(&mut self, _instr: u8) -> GbResult<()> {
+  fn jp__hl_(&mut self, _instr: u8) -> GbResult<u32> {
     self.pc = self.hl.hilo();
-    Ok(())
+    Ok(4)
   }
 
   /// CALL NZ a16
   ///
   /// Call routine at a16 if Z flag cleared
   ///
+  /// Cycles: 24/12
+  ///
   /// Flags: - - - -
-  fn call_nz_a16(&mut self, _instr: u8) -> GbResult<()> {
-    self.call_flag_a16(FLAG_Z, false)?;
-    Ok(())
+  fn call_nz_a16(&mut self, _instr: u8) -> GbResult<u32> {
+    let cycles = if self.call_flag_a16(FLAG_Z, false)? {
+      24
+    } else {
+      12
+    };
+    Ok(cycles)
   }
 
   /// CALL Z a16
   ///
   /// Call routine at a16 if Z flag set
   ///
+  /// Cycles: 24/12
+  ///
   /// Flags: - - - -
-  fn call_z_a16(&mut self, _instr: u8) -> GbResult<()> {
-    self.call_flag_a16(FLAG_Z, true)?;
-    Ok(())
+  fn call_z_a16(&mut self, _instr: u8) -> GbResult<u32> {
+    let cycles = if self.call_flag_a16(FLAG_Z, true)? {
+      24
+    } else {
+      12
+    };
+    Ok(cycles)
   }
 
   /// CALL a16
   ///
   /// Call routine at a16
   ///
+  /// Cycles: 24
+  ///
   /// Flags: - - - -
-  fn call_a16(&mut self, _instr: u8) -> GbResult<()> {
+  fn call_a16(&mut self, _instr: u8) -> GbResult<u32> {
     // always jump
     self.call_flag_a16(0, false)?;
-    Ok(())
+    Ok(24)
   }
 
   /// CALL NC a16
   ///
   /// Call routine at a16 if C flag cleared
   ///
+  /// Cycles: 24/12
+  ///
   /// Flags: - - - -
-  fn call_nc_a16(&mut self, _instr: u8) -> GbResult<()> {
-    self.call_flag_a16(FLAG_C, false)?;
-    Ok(())
+  fn call_nc_a16(&mut self, _instr: u8) -> GbResult<u32> {
+    let cycles = if self.call_flag_a16(FLAG_C, false)? {
+      24
+    } else {
+      12
+    };
+    Ok(cycles)
   }
 
   /// CALL C a16
   ///
   /// Call routine at a16 if C flag set
   ///
+  /// Cycles: 24/12
+  ///
   /// Flags: - - - -
-  fn call_c_a16(&mut self, _instr: u8) -> GbResult<()> {
-    self.call_flag_a16(FLAG_C, true)?;
-    Ok(())
+  fn call_c_a16(&mut self, _instr: u8) -> GbResult<u32> {
+    let cycles = if self.call_flag_a16(FLAG_C, true)? {
+      24
+    } else {
+      12
+    };
+    Ok(cycles)
   }
 
   /// RST 00h
   ///
   /// Call to 00h
   ///
+  /// Cycles: 16
+  ///
   /// Flags: - - - -
-  fn rst_00h(&mut self, _instr: u8) -> GbResult<()> {
+  fn rst_00h(&mut self, _instr: u8) -> GbResult<u32> {
     self.call(0x00)?;
-    Ok(())
+    Ok(16)
   }
 
   /// RST 08h
   ///
   /// Call to 08h
   ///
+  /// Cycles: 16
+  ///
   /// Flags: - - - -
-  fn rst_08h(&mut self, _instr: u8) -> GbResult<()> {
+  fn rst_08h(&mut self, _instr: u8) -> GbResult<u32> {
     self.call(0x08)?;
-    Ok(())
+    Ok(16)
   }
 
   /// RST 10h
   ///
   /// Call to 10h
   ///
+  /// Cycles: 16
+  ///
   /// Flags: - - - -
-  fn rst_10h(&mut self, _instr: u8) -> GbResult<()> {
+  fn rst_10h(&mut self, _instr: u8) -> GbResult<u32> {
     self.call(0x10)?;
-    Ok(())
+    Ok(16)
   }
 
   /// RST 18h
   ///
   /// Call to 18h
   ///
+  /// Cycles: 16
+  ///
   /// Flags: - - - -
-  fn rst_18h(&mut self, _instr: u8) -> GbResult<()> {
+  fn rst_18h(&mut self, _instr: u8) -> GbResult<u32> {
     self.call(0x18)?;
-    Ok(())
+    Ok(16)
   }
 
   /// RST 20h
   ///
   /// Call to 20h
   ///
+  /// Cycles: 8
+  ///
   /// Flags: - - - -
-  fn rst_20h(&mut self, _instr: u8) -> GbResult<()> {
+  fn rst_20h(&mut self, _instr: u8) -> GbResult<u32> {
     self.call(0x20)?;
-    Ok(())
+    Ok(8)
   }
 
   /// RST 28h
   ///
   /// Call to 28h
   ///
+  /// Cycles: 16
+  ///
   /// Flags: - - - -
-  fn rst_28h(&mut self, _instr: u8) -> GbResult<()> {
+  fn rst_28h(&mut self, _instr: u8) -> GbResult<u32> {
     self.call(0x28)?;
-    Ok(())
+    Ok(16)
   }
 
   /// RST 30h
   ///
   /// Call to 30h
   ///
+  /// Cycles: 16
+  ///
   /// Flags: - - - -
-  fn rst_30h(&mut self, _instr: u8) -> GbResult<()> {
+  fn rst_30h(&mut self, _instr: u8) -> GbResult<u32> {
     self.call(0x30)?;
-    Ok(())
+    Ok(16)
   }
 
   /// RST 38h
   ///
   /// Call to 38h
   ///
+  /// Cycles: 16
+  ///
   /// Flags: - - - -
-  fn rst_38h(&mut self, _instr: u8) -> GbResult<()> {
+  fn rst_38h(&mut self, _instr: u8) -> GbResult<u32> {
     self.call(0x38)?;
-    Ok(())
+    Ok(16)
   }
 
   /// RET
   ///
   /// Return from subroutine
   ///
+  /// Cycles: 16
+  ///
   /// Flags: - - - -
-  fn ret(&mut self, _instr: u8) -> GbResult<()> {
+  fn ret(&mut self, _instr: u8) -> GbResult<u32> {
     // always ret
-    self.ret_flag(0, false)
+    self.ret_flag(0, false)?;
+    Ok(16)
   }
 
   /// RET NZ
   ///
   /// Return from subroutine if Z flag cleared
   ///
+  /// Cycles: 20/8
+  ///
   /// Flags: - - - -
-  fn req_nz(&mut self, _instr: u8) -> GbResult<()> {
-    self.ret_flag(FLAG_Z, false)
+  fn req_nz(&mut self, _instr: u8) -> GbResult<u32> {
+    let cycles = if self.ret_flag(FLAG_Z, false)? { 20 } else { 8 };
+    Ok(cycles)
   }
 
   /// RET Z
   ///
   /// Return from subroutine if Z flag set
   ///
+  /// Cycles: 20/8
+  ///
   /// Flags: - - - -
-  fn ret_z(&mut self, _instr: u8) -> GbResult<()> {
-    self.ret_flag(FLAG_Z, true)
+  fn ret_z(&mut self, _instr: u8) -> GbResult<u32> {
+    let cycles = if self.ret_flag(FLAG_Z, true)? { 20 } else { 8 };
+    Ok(cycles)
   }
 
   /// RET NC
   ///
   /// Return from subroutine if C flag cleared
   ///
+  /// Cycles: 20/8
+  ///
   /// Flags: - - - -
-  fn ret_nc(&mut self, _instr: u8) -> GbResult<()> {
-    self.ret_flag(FLAG_C, false)
+  fn ret_nc(&mut self, _instr: u8) -> GbResult<u32> {
+    let cycles = if self.ret_flag(FLAG_C, false)? { 20 } else { 8 };
+    Ok(cycles)
   }
 
   /// RET C
   ///
   /// Return from subroutine if C flag set
   ///
+  /// Cycles: 20/8
+  ///
   /// Flags: - - - -
-  fn ret_c(&mut self, _instr: u8) -> GbResult<()> {
-    self.ret_flag(FLAG_C, true)
+  fn ret_c(&mut self, _instr: u8) -> GbResult<u32> {
+    let cycles = if self.ret_flag(FLAG_C, true)? { 20 } else { 8 };
+    Ok(cycles)
   }
 
   /// RETI
   ///
   /// Return and enable interrupts
   ///
+  /// Cycles: 16
+  ///
   /// Flags: - - - -
-  fn reti(&mut self, _instr: u8) -> GbResult<()> {
+  fn reti(&mut self, _instr: u8) -> GbResult<u32> {
     // TODO: This should be delayed by 1 instruction?
     self.ime = true;
-    self.ret_flag(0, false)
+    self.ret_flag(0, false)?;
+    Ok(16)
   }
 
   // *** Other ***
@@ -3219,103 +3784,127 @@ impl Cpu {
   ///
   /// Pop from the stack and store into BC
   ///
+  /// Cycles: 12
+  ///
   /// Flags: - - - -
-  fn pop_bc(&mut self, _instr: u8) -> GbResult<()> {
+  fn pop_bc(&mut self, _instr: u8) -> GbResult<u32> {
     let val = self.pop()?;
     self.bc.set_u16(val);
-    Ok(())
+    Ok(12)
   }
 
   /// POP DE
   ///
   /// Pop from the stack and store into DE
   ///
+  /// Cycles: 12
+  ///
   /// Flags: - - - -
-  fn pop_de(&mut self, _instr: u8) -> GbResult<()> {
+  fn pop_de(&mut self, _instr: u8) -> GbResult<u32> {
     let val = self.pop()?;
     self.de.set_u16(val);
-    Ok(())
+    Ok(12)
   }
 
   /// POP HL
   ///
   /// Pop from the stack and store into HL
   ///
+  /// Cycles: 12
+  ///
   /// Flags: - - - -
-  fn pop_hl(&mut self, _instr: u8) -> GbResult<()> {
+  fn pop_hl(&mut self, _instr: u8) -> GbResult<u32> {
     let val = self.pop()?;
     self.hl.set_u16(val);
-    Ok(())
+    Ok(12)
   }
 
   /// POP AF
   ///
   /// Pop from the stack and store into AF
   ///
+  /// Cycles: 12
+  ///
   /// Flags: Z N H C
-  fn pop_af(&mut self, _instr: u8) -> GbResult<()> {
+  fn pop_af(&mut self, _instr: u8) -> GbResult<u32> {
     let val = self.pop()?;
     self.af.set_u16(val);
     // can't set the lower 4 bits of the f register
     self.af.lo &= 0xf0;
-    Ok(())
+    Ok(12)
   }
 
   /// PUSH BC
   ///
   /// Push BC to the stack
   ///
+  /// Cycles: 16
+  ///
   /// Flags: - - - -
-  fn push_bc(&mut self, _instr: u8) -> GbResult<()> {
-    self.push(self.bc.hilo())
+  fn push_bc(&mut self, _instr: u8) -> GbResult<u32> {
+    self.push(self.bc.hilo())?;
+    Ok(16)
   }
 
   /// PUSH DE
   ///
   /// Push DE to the stack
   ///
+  /// Cycles: 16
+  ///
   /// Flags: - - - -
-  fn push_de(&mut self, _instr: u8) -> GbResult<()> {
-    self.push(self.de.hilo())
+  fn push_de(&mut self, _instr: u8) -> GbResult<u32> {
+    self.push(self.de.hilo())?;
+    Ok(16)
   }
 
   /// PUSH HL
   ///
   /// Push HL to the stack
   ///
+  /// Cycles: 16
+  ///
   /// Flags: - - - -
-  fn push_hl(&mut self, _instr: u8) -> GbResult<()> {
-    self.push(self.hl.hilo())
+  fn push_hl(&mut self, _instr: u8) -> GbResult<u32> {
+    self.push(self.hl.hilo())?;
+    Ok(16)
   }
 
   /// PUSH AF
   ///
   /// Push AF to the stack
   ///
+  /// Cycles: 16
+  ///
   /// Flags: - - - -
-  fn push_af(&mut self, _instr: u8) -> GbResult<()> {
-    self.push(self.af.hilo())
+  fn push_af(&mut self, _instr: u8) -> GbResult<u32> {
+    self.push(self.af.hilo())?;
+    Ok(16)
   }
 
   /// DI
   ///
   /// Disable Interrupts
   ///
+  /// Cycles: 4
+  ///
   /// Flags: - - - -
-  fn di(&mut self, _instr: u8) -> GbResult<()> {
+  fn di(&mut self, _instr: u8) -> GbResult<u32> {
     self.ime = false;
-    Ok(())
+    Ok(4)
   }
 
   /// EI
   ///
   /// Enable Interrupts
   ///
+  /// Cycles: 4
+  ///
   /// Flags: - - - -
-  fn ei(&mut self, _instr: u8) -> GbResult<()> {
+  fn ei(&mut self, _instr: u8) -> GbResult<u32> {
     // TODO: this should be delayed by 1 instruction?
     self.ime = true;
-    Ok(())
+    Ok(4)
   }
 
   // *** Prefix CB ***
@@ -3472,2583 +4061,3118 @@ impl Cpu {
   ///
   /// Rotate Left
   ///
+  /// Cycles: 8
+  ///
   /// Flags: Z 0 0 C
-  fn rlc_b(&mut self, _instr: u8) -> GbResult<()> {
+  fn rlc_b(&mut self, _instr: u8) -> GbResult<u32> {
     self.bc.hi = self.rlc_r(self.bc.hi);
-    Ok(())
+    Ok(8)
   }
 
   /// RLC C
   ///
   /// Rotate Left
   ///
+  /// Cycles: 8
+  ///
   /// Flags: Z 0 0 C
-  fn rlc_c(&mut self, _instr: u8) -> GbResult<()> {
+  fn rlc_c(&mut self, _instr: u8) -> GbResult<u32> {
     self.bc.lo = self.rlc_r(self.bc.lo);
-    Ok(())
+    Ok(8)
   }
 
   /// RLC D
   ///
   /// Rotate Left
   ///
+  /// Cycles: 8
   /// Flags: Z 0 0 C
-  fn rlc_d(&mut self, _instr: u8) -> GbResult<()> {
+  fn rlc_d(&mut self, _instr: u8) -> GbResult<u32> {
     self.de.hi = self.rlc_r(self.de.hi);
-    Ok(())
+    Ok(8)
   }
 
   /// RLC E
   ///
   /// Rotate Left
   ///
+  /// Cycles: 8
+  ///
   /// Flags: Z 0 0 C
-  fn rlc_e(&mut self, _instr: u8) -> GbResult<()> {
+  fn rlc_e(&mut self, _instr: u8) -> GbResult<u32> {
     self.de.lo = self.rlc_r(self.de.lo);
-    Ok(())
+    Ok(8)
   }
 
   /// RLC H
   ///
   /// Rotate Left
   ///
+  /// Cycles: 8
+  ///
   /// Flags: Z 0 0 C
-  fn rlc_h(&mut self, _instr: u8) -> GbResult<()> {
+  fn rlc_h(&mut self, _instr: u8) -> GbResult<u32> {
     self.hl.hi = self.rlc_r(self.hl.hi);
-    Ok(())
+    Ok(8)
   }
 
   /// RLC L
   ///
   /// Rotate Left
   ///
+  /// Cycles: 8
+  ///
   /// Flags: Z 0 0 C
-  fn rlc_l(&mut self, _instr: u8) -> GbResult<()> {
+  fn rlc_l(&mut self, _instr: u8) -> GbResult<u32> {
     self.hl.lo = self.rlc_r(self.hl.lo);
-    Ok(())
+    Ok(8)
   }
 
   /// RLC (HL)
   ///
   /// Rotate Left
   ///
+  /// Cycles: 8
+  ///
   /// Flags: Z 0 0 C
-  fn rlc__hl_(&mut self, _instr: u8) -> GbResult<()> {
+  fn rlc__hl_(&mut self, _instr: u8) -> GbResult<u32> {
     let val = self.bus.lazy_dref().read8(self.hl.hilo())?;
     let r_val = self.rlc_r(val);
-    self.bus.lazy_dref_mut().write8(self.hl.hilo(), r_val)
+    self.bus.lazy_dref_mut().write8(self.hl.hilo(), r_val)?;
+    Ok(16)
   }
 
   /// RLC A
   ///
   /// Rotate Left
   ///
+  /// Cycles: 8
+  ///
   /// Flags: Z 0 0 C
-  fn rlc_a(&mut self, _instr: u8) -> GbResult<()> {
+  fn rlc_a(&mut self, _instr: u8) -> GbResult<u32> {
     self.af.hi = self.rlc_r(self.af.hi);
-    Ok(())
+    Ok(8)
   }
 
   /// RRC B
   ///
   /// Rotate Right
   ///
+  /// Cycles: 8
+  ///
   /// Flags: Z 0 0 C
-  fn rrc_b(&mut self, _instr: u8) -> GbResult<()> {
+  fn rrc_b(&mut self, _instr: u8) -> GbResult<u32> {
     self.bc.hi = self.rrc_r(self.bc.hi);
-    Ok(())
+    Ok(8)
   }
 
   /// RRC C
   ///
   /// Rotate Right
   ///
+  /// Cycles: 8
+  ///
   /// Flags: Z 0 0 C
-  fn rrc_c(&mut self, _instr: u8) -> GbResult<()> {
+  fn rrc_c(&mut self, _instr: u8) -> GbResult<u32> {
     self.bc.lo = self.rrc_r(self.bc.lo);
-    Ok(())
+    Ok(8)
   }
 
   /// RRC D
   ///
   /// Rotate Right
   ///
+  /// Cycles: 8
+  ///
   /// Flags: Z 0 0 C
-  fn rrc_d(&mut self, _instr: u8) -> GbResult<()> {
+  fn rrc_d(&mut self, _instr: u8) -> GbResult<u32> {
     self.de.hi = self.rrc_r(self.de.hi);
-    Ok(())
+    Ok(8)
   }
 
   /// RRC E
   ///
   /// Rotate Right
   ///
+  /// Cycles: 8
+  ///
   /// Flags: Z 0 0 C
-  fn rrc_e(&mut self, _instr: u8) -> GbResult<()> {
+  fn rrc_e(&mut self, _instr: u8) -> GbResult<u32> {
     self.de.lo = self.rrc_r(self.de.lo);
-    Ok(())
+    Ok(8)
   }
 
   /// RRC H
   ///
   /// Rotate Right
   ///
+  /// Cycles: 8
+  ///
   /// Flags: Z 0 0 C
-  fn rrc_h(&mut self, _instr: u8) -> GbResult<()> {
+  fn rrc_h(&mut self, _instr: u8) -> GbResult<u32> {
     self.hl.hi = self.rrc_r(self.hl.hi);
-    Ok(())
+    Ok(8)
   }
 
   /// RRC L
   ///
   /// Rotate Right
   ///
+  /// Cycles: 8
+  ///
   /// Flags: Z 0 0 C
-  fn rrc_l(&mut self, _instr: u8) -> GbResult<()> {
+  fn rrc_l(&mut self, _instr: u8) -> GbResult<u32> {
     self.hl.lo = self.rrc_r(self.hl.lo);
-    Ok(())
+    Ok(8)
   }
 
   /// RRC (HL)
   ///
   /// Rotate Right
   ///
+  /// Cycles: 16
+  ///
   /// Flags: Z 0 0 C
-  fn rrc__hl_(&mut self, _instr: u8) -> GbResult<()> {
+  fn rrc__hl_(&mut self, _instr: u8) -> GbResult<u32> {
     let val = self.bus.lazy_dref().read8(self.hl.hilo())?;
     let r_val = self.rrc_r(val);
-    self.bus.lazy_dref_mut().write8(self.hl.hilo(), r_val)
+    self.bus.lazy_dref_mut().write8(self.hl.hilo(), r_val)?;
+    Ok(16)
   }
 
   /// RRC A
   ///
   /// Rotate Right
   ///
+  /// Cycles: 8
+  ///
   /// Flags: Z 0 0 C
-  fn rrc_a(&mut self, _instr: u8) -> GbResult<()> {
+  fn rrc_a(&mut self, _instr: u8) -> GbResult<u32> {
     self.af.hi = self.rrc_r(self.af.hi);
-    Ok(())
+    Ok(8)
   }
 
   /// RL B
   ///
   /// Rotate Right through carry
   ///
+  /// Cycles: 8
+  ///
   /// Flags: Z 0 0 C
-  fn rl_b(&mut self, _instr: u8) -> GbResult<()> {
+  fn rl_b(&mut self, _instr: u8) -> GbResult<u32> {
     self.bc.hi = self.rr_r(self.bc.hi);
-    Ok(())
+    Ok(8)
   }
 
   /// RL C
   ///
   /// Rotate Right through carry
   ///
+  /// Cycles: 8
+  ///
   /// Flags: Z 0 0 C
-  fn rl_c(&mut self, _instr: u8) -> GbResult<()> {
+  fn rl_c(&mut self, _instr: u8) -> GbResult<u32> {
     self.bc.lo = self.rr_r(self.bc.lo);
-    Ok(())
+    Ok(8)
   }
 
   /// RL D
   ///
   /// Rotate Right through carry
   ///
+  /// Cycles: 8
+  ///
   /// Flags: Z 0 0 C
-  fn rl_d(&mut self, _instr: u8) -> GbResult<()> {
+  fn rl_d(&mut self, _instr: u8) -> GbResult<u32> {
     self.de.hi = self.rr_r(self.de.hi);
-    Ok(())
+    Ok(8)
   }
 
   /// RL E
   ///
   /// Rotate Right through carry
   ///
+  /// Cycles: 8
+  ///
   /// Flags: Z 0 0 C
-  fn rl_e(&mut self, _instr: u8) -> GbResult<()> {
+  fn rl_e(&mut self, _instr: u8) -> GbResult<u32> {
     self.de.lo = self.rr_r(self.de.lo);
-    Ok(())
+    Ok(8)
   }
 
   /// RL H
   ///
   /// Rotate Right through carry
   ///
+  /// Cycles: 8
+  ///
   /// Flags: Z 0 0 C
-  fn rl_h(&mut self, _instr: u8) -> GbResult<()> {
+  fn rl_h(&mut self, _instr: u8) -> GbResult<u32> {
     self.hl.hi = self.rr_r(self.hl.hi);
-    Ok(())
+    Ok(8)
   }
 
   /// RL L
   ///
   /// Rotate Right through carry
   ///
+  /// Cycles: 8
+  ///
   /// Flags: Z 0 0 C
-  fn rl_l(&mut self, _instr: u8) -> GbResult<()> {
+  fn rl_l(&mut self, _instr: u8) -> GbResult<u32> {
     self.hl.lo = self.rr_r(self.hl.lo);
-    Ok(())
+    Ok(8)
   }
 
   /// RL (HL)
   ///
   /// Rotate Right through carry
   ///
+  /// Cycles: 16
+  ///
   /// Flags: Z 0 0 C
-  fn rl__hl_(&mut self, _instr: u8) -> GbResult<()> {
+  fn rl__hl_(&mut self, _instr: u8) -> GbResult<u32> {
     let val = self.bus.lazy_dref().read8(self.hl.hilo())?;
     let r_val = self.rl_r(val);
-    self.bus.lazy_dref_mut().write8(self.hl.hilo(), r_val)
+    self.bus.lazy_dref_mut().write8(self.hl.hilo(), r_val)?;
+    Ok(16)
   }
 
   /// RL A
   ///
   /// Rotate Right through carry
   ///
+  /// Cycles: 8
+  ///
   /// Flags: Z 0 0 C
-  fn rl_a(&mut self, _instr: u8) -> GbResult<()> {
+  fn rl_a(&mut self, _instr: u8) -> GbResult<u32> {
     self.af.hi = self.rr_r(self.af.hi);
-    Ok(())
+    Ok(8)
   }
 
   /// RR B
   ///
   /// Rotate Right through carry
   ///
+  /// Cycles: 8
+  ///
   /// Flags: Z 0 0 C
-  fn rr_b(&mut self, _instr: u8) -> GbResult<()> {
+  fn rr_b(&mut self, _instr: u8) -> GbResult<u32> {
     self.bc.hi = self.rr_r(self.bc.hi);
-    Ok(())
+    Ok(8)
   }
 
   /// RR C
   ///
   /// Rotate Right through carry
   ///
+  /// Cycles: 8
+  ///
   /// Flags: Z 0 0 C
-  fn rr_c(&mut self, _instr: u8) -> GbResult<()> {
+  fn rr_c(&mut self, _instr: u8) -> GbResult<u32> {
     self.bc.lo = self.rr_r(self.bc.lo);
-    Ok(())
+    Ok(8)
   }
 
   /// RR D
   ///
   /// Rotate Right through carry
   ///
+  /// Cycles: 8
+  ///
   /// Flags: Z 0 0 C
-  fn rr_d(&mut self, _instr: u8) -> GbResult<()> {
+  fn rr_d(&mut self, _instr: u8) -> GbResult<u32> {
     self.de.hi = self.rr_r(self.de.hi);
-    Ok(())
+    Ok(8)
   }
 
   /// RR E
   ///
   /// Rotate Right through carry
   ///
+  /// Cycles: 8
+  ///
   /// Flags: Z 0 0 C
-  fn rr_e(&mut self, _instr: u8) -> GbResult<()> {
+  fn rr_e(&mut self, _instr: u8) -> GbResult<u32> {
     self.de.lo = self.rr_r(self.de.lo);
-    Ok(())
+    Ok(8)
   }
 
   /// RR H
   ///
   /// Rotate Right through carry
   ///
+  /// Cycles: 8
+  ///
   /// Flags: Z 0 0 C
-  fn rr_h(&mut self, _instr: u8) -> GbResult<()> {
+  fn rr_h(&mut self, _instr: u8) -> GbResult<u32> {
     self.hl.hi = self.rr_r(self.hl.hi);
-    Ok(())
+    Ok(8)
   }
 
   /// RR L
   ///
   /// Rotate Right through carry
   ///
+  /// Cycles: 8
+  ///
   /// Flags: Z 0 0 C
-  fn rr_l(&mut self, _instr: u8) -> GbResult<()> {
+  fn rr_l(&mut self, _instr: u8) -> GbResult<u32> {
     self.hl.lo = self.rr_r(self.hl.lo);
-    Ok(())
+    Ok(8)
   }
 
   /// RR (HL)
   ///
   /// Rotate Right through carry
   ///
+  /// Cycles: 16
+  ///
   /// Flags: Z 0 0 C
-  fn rr__hl_(&mut self, _instr: u8) -> GbResult<()> {
+  fn rr__hl_(&mut self, _instr: u8) -> GbResult<u32> {
     let val = self.bus.lazy_dref().read8(self.hl.hilo())?;
     let r_val = self.rr_r(val);
-    self.bus.lazy_dref_mut().write8(self.hl.hilo(), r_val)
+    self.bus.lazy_dref_mut().write8(self.hl.hilo(), r_val)?;
+    Ok(16)
   }
 
   /// RR A
   ///
   /// Rotate Right through carry
   ///
+  /// Cycles: 8
+  ///
   /// Flags: Z 0 0 C
-  fn rr_a(&mut self, _instr: u8) -> GbResult<()> {
+  fn rr_a(&mut self, _instr: u8) -> GbResult<u32> {
     self.af.hi = self.rr_r(self.af.hi);
-    Ok(())
+    Ok(8)
   }
 
   /// SLA B
   ///
   /// Shift Left Arithmetic
   ///
+  /// Cycles: 8
+  ///
   /// Flags: Z 0 0 C
-  fn sla_b(&mut self, _instr: u8) -> GbResult<()> {
+  fn sla_b(&mut self, _instr: u8) -> GbResult<u32> {
     self.bc.hi = self.sla_r(self.bc.hi);
-    Ok(())
+    Ok(8)
   }
 
   /// SLA C
   ///
   /// Shift Left Arithmetic
   ///
+  /// Cycles: 8
+  ///
   /// Flags: Z 0 0 C
-  fn sla_c(&mut self, _instr: u8) -> GbResult<()> {
+  fn sla_c(&mut self, _instr: u8) -> GbResult<u32> {
     self.bc.lo = self.sla_r(self.bc.lo);
-    Ok(())
+    Ok(8)
   }
 
   /// SLA D
   ///
   /// Shift Left Arithmetic
   ///
+  /// Cycles: 8
+  ///
   /// Flags: Z 0 0 C
-  fn sla_d(&mut self, _instr: u8) -> GbResult<()> {
+  fn sla_d(&mut self, _instr: u8) -> GbResult<u32> {
     self.de.hi = self.sla_r(self.de.hi);
-    Ok(())
+    Ok(8)
   }
 
   /// SLA E
   ///
   /// Shift Left Arithmetic
   ///
+  /// Cycles: 8
+  ///
   /// Flags: Z 0 0 C
-  fn sla_e(&mut self, _instr: u8) -> GbResult<()> {
+  fn sla_e(&mut self, _instr: u8) -> GbResult<u32> {
     self.de.lo = self.sla_r(self.de.lo);
-    Ok(())
+    Ok(8)
   }
 
   /// SLA H
   ///
   /// Shift Left Arithmetic
   ///
+  /// Cycles: 8
+  ///
   /// Flags: Z 0 0 C
-  fn sla_h(&mut self, _instr: u8) -> GbResult<()> {
+  fn sla_h(&mut self, _instr: u8) -> GbResult<u32> {
     self.hl.hi = self.sla_r(self.hl.hi);
-    Ok(())
+    Ok(8)
   }
 
   /// SLA L
   ///
   /// Shift Left Arithmetic
   ///
+  /// Cycles: 8
+  ///
   /// Flags: Z 0 0 C
-  fn sla_l(&mut self, _instr: u8) -> GbResult<()> {
+  fn sla_l(&mut self, _instr: u8) -> GbResult<u32> {
     self.hl.lo = self.sla_r(self.hl.lo);
-    Ok(())
+    Ok(8)
   }
 
   /// SLA (HL)
   ///
   /// Shift Left Arithmetic
   ///
+  /// Cycles: 16
+  ///
   /// Flags: Z 0 0 C
-  fn sla__hl_(&mut self, _instr: u8) -> GbResult<()> {
+  fn sla__hl_(&mut self, _instr: u8) -> GbResult<u32> {
     let val = self.bus.lazy_dref().read8(self.hl.hilo())?;
     let val = self.sla_r(val);
-    self.bus.lazy_dref_mut().write8(self.hl.hilo(), val)
+    self.bus.lazy_dref_mut().write8(self.hl.hilo(), val)?;
+    Ok(16)
   }
 
   /// SLA A
   ///
   /// Shift Left Arithmetic
   ///
+  /// Cycles: 8
+  ///
   /// Flags: Z 0 0 C
-  fn sla_a(&mut self, _instr: u8) -> GbResult<()> {
+  fn sla_a(&mut self, _instr: u8) -> GbResult<u32> {
     self.af.hi = self.sla_r(self.af.hi);
-    Ok(())
+    Ok(8)
   }
 
   /// SRA B
   ///
   /// Shift Right Arithmetic
   ///
+  /// Cycles: 8
+  ///
   /// Flags: Z 0 0 C
-  fn sra_b(&mut self, _instr: u8) -> GbResult<()> {
+  fn sra_b(&mut self, _instr: u8) -> GbResult<u32> {
     self.bc.hi = self.sra_r(self.bc.hi);
-    Ok(())
+    Ok(8)
   }
 
   /// SRA C
   ///
   /// Shift Right Arithmetic
   ///
+  /// Cycles: 8
+  ///
   /// Flags: Z 0 0 C
-  fn sra_c(&mut self, _instr: u8) -> GbResult<()> {
+  fn sra_c(&mut self, _instr: u8) -> GbResult<u32> {
     self.bc.lo = self.sra_r(self.bc.lo);
-    Ok(())
+    Ok(8)
   }
 
   /// SRA D
   ///
   /// Shift Right Arithmetic
   ///
+  /// Cycles: 8
+  ///
   /// Flags: Z 0 0 C
-  fn sra_d(&mut self, _instr: u8) -> GbResult<()> {
+  fn sra_d(&mut self, _instr: u8) -> GbResult<u32> {
     self.de.hi = self.sra_r(self.de.hi);
-    Ok(())
+    Ok(8)
   }
 
   /// SRA E
   ///
   /// Shift Right Arithmetic
   ///
+  /// Cycles: 8
+  ///
   /// Flags: Z 0 0 C
-  fn sra_e(&mut self, _instr: u8) -> GbResult<()> {
+  fn sra_e(&mut self, _instr: u8) -> GbResult<u32> {
     self.de.lo = self.sra_r(self.de.lo);
-    Ok(())
+    Ok(8)
   }
 
   /// SRA H
   ///
   /// Shift Right Arithmetic
   ///
+  /// Cycles: 8
+  ///
   /// Flags: Z 0 0 C
-  fn sra_h(&mut self, _instr: u8) -> GbResult<()> {
+  fn sra_h(&mut self, _instr: u8) -> GbResult<u32> {
     self.hl.hi = self.sra_r(self.hl.hi);
-    Ok(())
+    Ok(8)
   }
 
   /// SRA L
   ///
   /// Shift Right Arithmetic
   ///
+  /// Cycles: 8
+  ///
   /// Flags: Z 0 0 C
-  fn sra_l(&mut self, _instr: u8) -> GbResult<()> {
+  fn sra_l(&mut self, _instr: u8) -> GbResult<u32> {
     self.hl.lo = self.sra_r(self.hl.lo);
-    Ok(())
+    Ok(8)
   }
 
   /// SRA (HL)
   ///
   /// Shift Right Arithmetic
   ///
+  /// Cycles: 16
+  ///
   /// Flags: Z 0 0 C
-  fn sra__hl_(&mut self, _instr: u8) -> GbResult<()> {
+  fn sra__hl_(&mut self, _instr: u8) -> GbResult<u32> {
     let val = self.bus.lazy_dref().read8(self.hl.hilo())?;
     let val = self.sra_r(val);
-    self.bus.lazy_dref_mut().write8(self.hl.hilo(), val)
+    self.bus.lazy_dref_mut().write8(self.hl.hilo(), val)?;
+    Ok(16)
   }
 
   /// SRA A
   ///
   /// Shift Right Arithmetic
   ///
+  /// Cycles: 8
+  ///
   /// Flags: Z 0 0 C
-  fn sra_a(&mut self, _instr: u8) -> GbResult<()> {
+  fn sra_a(&mut self, _instr: u8) -> GbResult<u32> {
     self.af.hi = self.sra_r(self.af.hi);
-    Ok(())
+    Ok(8)
   }
 
   /// SWAP B
   ///
   /// Swap nibbles in byte
   ///
+  /// Cycles: 8
+  ///
   /// Flags: Z 0 0 0
-  fn swap_b(&mut self, _instr: u8) -> GbResult<()> {
+  fn swap_b(&mut self, _instr: u8) -> GbResult<u32> {
     self.bc.hi = self.swap_r(self.bc.hi);
-    Ok(())
+    Ok(8)
   }
 
   /// SWAP C
   ///
   /// Swap nibbles in byte
   ///
+  /// Cycles: 8
+  ///
   /// Flags: Z 0 0 0
-  fn swap_c(&mut self, _instr: u8) -> GbResult<()> {
+  fn swap_c(&mut self, _instr: u8) -> GbResult<u32> {
     self.bc.lo = self.swap_r(self.bc.lo);
-    Ok(())
+    Ok(8)
   }
 
   /// SWAP D
   ///
   /// Swap nibbles in byte
   ///
+  /// Cycles: 8
+  ///
   /// Flags: Z 0 0 0
-  fn swap_d(&mut self, _instr: u8) -> GbResult<()> {
+  fn swap_d(&mut self, _instr: u8) -> GbResult<u32> {
     self.de.hi = self.swap_r(self.de.hi);
-    Ok(())
+    Ok(8)
   }
 
   /// SWAP E
   ///
   /// Swap nibbles in byte
   ///
+  /// Cycles: 8
+  ///
   /// Flags: Z 0 0 0
-  fn swap_e(&mut self, _instr: u8) -> GbResult<()> {
+  fn swap_e(&mut self, _instr: u8) -> GbResult<u32> {
     self.de.lo = self.swap_r(self.de.lo);
-    Ok(())
+    Ok(8)
   }
 
   /// SWAP H
   ///
   /// Swap nibbles in byte
   ///
+  /// Cycles: 8
+  ///
   /// Flags: Z 0 0 0
-  fn swap_h(&mut self, _instr: u8) -> GbResult<()> {
+  fn swap_h(&mut self, _instr: u8) -> GbResult<u32> {
     self.hl.hi = self.swap_r(self.hl.hi);
-    Ok(())
+    Ok(8)
   }
 
   /// SWAP L
   ///
   /// Swap nibbles in byte
   ///
+  /// Cycles: 8
+  ///
   /// Flags: Z 0 0 0
-  fn swap_l(&mut self, _instr: u8) -> GbResult<()> {
+  fn swap_l(&mut self, _instr: u8) -> GbResult<u32> {
     self.hl.lo = self.swap_r(self.hl.lo);
-    Ok(())
+    Ok(8)
   }
 
   /// SWAP (HL)
   ///
   /// Swap nibbles in byte
   ///
+  /// Cycles: 16
+  ///
   /// Flags: Z 0 0 0
-  fn swap__hl_(&mut self, _instr: u8) -> GbResult<()> {
+  fn swap__hl_(&mut self, _instr: u8) -> GbResult<u32> {
     let val = self.bus.lazy_dref().read8(self.hl.hilo())?;
     let val = self.swap_r(val);
-    self.bus.lazy_dref_mut().write8(self.hl.hilo(), val)
+    self.bus.lazy_dref_mut().write8(self.hl.hilo(), val)?;
+    Ok(16)
   }
 
   /// SWAP A
   ///
   /// Swap nibbles in byte
   ///
+  /// Cycles: 8
+  ///
   /// Flags: Z 0 0 0
-  fn swap_a(&mut self, _instr: u8) -> GbResult<()> {
+  fn swap_a(&mut self, _instr: u8) -> GbResult<u32> {
     self.af.hi = self.swap_r(self.af.hi);
-    Ok(())
+    Ok(8)
   }
 
   /// SRL B
   ///
   /// Shift Right Logical
   ///
+  /// Cycles: 8
+  ///
   /// Flags: Z 0 0 C
-  fn srl_b(&mut self, _instr: u8) -> GbResult<()> {
+  fn srl_b(&mut self, _instr: u8) -> GbResult<u32> {
     self.bc.hi = self.srl_r(self.bc.hi);
-    Ok(())
+    Ok(8)
   }
 
   /// SRL C
   ///
   /// Shift Right Logical
   ///
+  /// Cycles: 8
+  ///
   /// Flags: Z 0 0 C
-  fn srl_c(&mut self, _instr: u8) -> GbResult<()> {
+  fn srl_c(&mut self, _instr: u8) -> GbResult<u32> {
     self.bc.lo = self.srl_r(self.bc.lo);
-    Ok(())
+    Ok(8)
   }
 
   /// SRL D
   ///
   /// Shift Right Logical
   ///
+  /// Cycles: 8
+  ///
   /// Flags: Z 0 0 C
-  fn srl_d(&mut self, _instr: u8) -> GbResult<()> {
+  fn srl_d(&mut self, _instr: u8) -> GbResult<u32> {
     self.de.hi = self.srl_r(self.de.hi);
-    Ok(())
+    Ok(8)
   }
 
   /// SRL E
   ///
   /// Shift Right Logical
   ///
+  /// Cycles: 8
+  ///
   /// Flags: Z 0 0 C
-  fn srl_e(&mut self, _instr: u8) -> GbResult<()> {
+  fn srl_e(&mut self, _instr: u8) -> GbResult<u32> {
     self.de.lo = self.srl_r(self.de.lo);
-    Ok(())
+    Ok(8)
   }
 
   /// SRL H
   ///
   /// Shift Right Logical
   ///
+  /// Cycles: 8
+  ///
   /// Flags: Z 0 0 C
-  fn srl_h(&mut self, _instr: u8) -> GbResult<()> {
+  fn srl_h(&mut self, _instr: u8) -> GbResult<u32> {
     self.hl.hi = self.srl_r(self.hl.hi);
-    Ok(())
+    Ok(8)
   }
 
   /// SRL L
   ///
   /// Shift Right Logical
   ///
+  /// Cycles: 8
+  ///
   /// Flags: Z 0 0 C
-  fn srl_l(&mut self, _instr: u8) -> GbResult<()> {
+  fn srl_l(&mut self, _instr: u8) -> GbResult<u32> {
     self.hl.lo = self.srl_r(self.hl.lo);
-    Ok(())
+    Ok(8)
   }
 
   /// SRL (HL)
   ///
   /// Shift Right Logical
   ///
+  /// Cycles: 16
+  ///
   /// Flags: Z 0 0 C
-  fn srl__hl_(&mut self, _instr: u8) -> GbResult<()> {
+  fn srl__hl_(&mut self, _instr: u8) -> GbResult<u32> {
     let val = self.bus.lazy_dref().read8(self.hl.hilo())?;
     let val = self.srl_r(val);
-    self.bus.lazy_dref_mut().write8(self.hl.hilo(), val)
+    self.bus.lazy_dref_mut().write8(self.hl.hilo(), val)?;
+    Ok(16)
   }
 
   /// SRL A
   ///
   /// Shift Right Logical
   ///
+  /// Cycles: 8
+  ///
   /// Flags: Z 0 0 C
-  fn srl_a(&mut self, _instr: u8) -> GbResult<()> {
+  fn srl_a(&mut self, _instr: u8) -> GbResult<u32> {
     self.af.hi = self.srl_r(self.af.hi);
-    Ok(())
+    Ok(8)
   }
 
   /// Bit 0 B
   ///
   /// Test bit 0
   ///
+  /// Cycles: 8
+  ///
   /// Flags: Z 0 1 -
-  fn bit_0_b(&mut self, _instr: u8) -> GbResult<()> {
+  fn bit_0_b(&mut self, _instr: u8) -> GbResult<u32> {
     self.bit_r(0, self.bc.hi);
-    Ok(())
+    Ok(8)
   }
 
   /// Bit 0 C
   ///
   /// Test bit 0
   ///
+  /// Cycles: 8
+  ///
   /// Flags: Z 0 1 -
-  fn bit_0_c(&mut self, _instr: u8) -> GbResult<()> {
+  fn bit_0_c(&mut self, _instr: u8) -> GbResult<u32> {
     self.bit_r(0, self.bc.lo);
-    Ok(())
+    Ok(8)
   }
 
   /// Bit 0 D
   ///
   /// Test bit 0
   ///
+  /// Cycles: 8
+  ///
   /// Flags: Z 0 1 -
-  fn bit_0_d(&mut self, _instr: u8) -> GbResult<()> {
+  fn bit_0_d(&mut self, _instr: u8) -> GbResult<u32> {
     self.bit_r(0, self.de.hi);
-    Ok(())
+    Ok(8)
   }
 
   /// Bit 0 E
   ///
   /// Test bit 0
   ///
+  /// Cycles: 8
+  ///
   /// Flags: Z 0 1 -
-  fn bit_0_e(&mut self, _instr: u8) -> GbResult<()> {
+  fn bit_0_e(&mut self, _instr: u8) -> GbResult<u32> {
     self.bit_r(0, self.de.lo);
-    Ok(())
+    Ok(8)
   }
 
   /// Bit 0 H
   ///
   /// Test bit 0
   ///
+  /// Cycles: 8
+  ///
   /// Flags: Z 0 1 -
-  fn bit_0_h(&mut self, _instr: u8) -> GbResult<()> {
+  fn bit_0_h(&mut self, _instr: u8) -> GbResult<u32> {
     self.bit_r(0, self.hl.hi);
-    Ok(())
+    Ok(8)
   }
 
   /// Bit 0 L
   ///
   /// Test bit 0
   ///
+  /// Cycles: 8
+  ///
   /// Flags: Z 0 1 -
-  fn bit_0_l(&mut self, _instr: u8) -> GbResult<()> {
+  fn bit_0_l(&mut self, _instr: u8) -> GbResult<u32> {
     self.bit_r(0, self.hl.lo);
-    Ok(())
+    Ok(8)
   }
 
   /// Bit 0 (HL)
   ///
   /// Test bit 0
   ///
+  /// Cycles: 12
+  ///
   /// Flags: Z 0 1 -
-  fn bit_0__hl_(&mut self, _instr: u8) -> GbResult<()> {
+  fn bit_0__hl_(&mut self, _instr: u8) -> GbResult<u32> {
     let val = self.bus.lazy_dref().read8(self.hl.hilo())?;
     self.bit_r(0, val);
-    Ok(())
+    Ok(12)
   }
 
   /// Bit 0 A
   ///
   /// Test bit 0
   ///
+  /// Cycles: 8
+  ///
   /// Flags: Z 0 1 -
-  fn bit_0_a(&mut self, _instr: u8) -> GbResult<()> {
+  fn bit_0_a(&mut self, _instr: u8) -> GbResult<u32> {
     self.bit_r(0, self.af.hi);
-    Ok(())
+    Ok(8)
   }
 
   /// Bit 1 B
   ///
   /// Test bit 1
   ///
+  /// Cycles: 8
+  ///
   /// Flags: Z 0 1 -
-  fn bit_1_b(&mut self, _instr: u8) -> GbResult<()> {
+  fn bit_1_b(&mut self, _instr: u8) -> GbResult<u32> {
     self.bit_r(1, self.bc.hi);
-    Ok(())
+    Ok(8)
   }
 
   /// Bit 1 C
   ///
   /// Test bit 1
   ///
+  /// Cycles: 8
+  ///
   /// Flags: Z 0 1 -
-  fn bit_1_c(&mut self, _instr: u8) -> GbResult<()> {
+  fn bit_1_c(&mut self, _instr: u8) -> GbResult<u32> {
     self.bit_r(1, self.bc.lo);
-    Ok(())
+    Ok(8)
   }
 
   /// Bit 1 D
   ///
   /// Test bit 1
   ///
+  /// Cycles: 8
+  ///
   /// Flags: Z 0 1 -
-  fn bit_1_d(&mut self, _instr: u8) -> GbResult<()> {
+  fn bit_1_d(&mut self, _instr: u8) -> GbResult<u32> {
     self.bit_r(1, self.de.hi);
-    Ok(())
+    Ok(8)
   }
 
   /// Bit 1 E
   ///
   /// Test bit 1
   ///
+  /// Cycles: 8
+  ///
   /// Flags: Z 0 1 -
-  fn bit_1_e(&mut self, _instr: u8) -> GbResult<()> {
+  fn bit_1_e(&mut self, _instr: u8) -> GbResult<u32> {
     self.bit_r(1, self.de.lo);
-    Ok(())
+    Ok(8)
   }
 
   /// Bit 1 H
   ///
   /// Test bit 1
   ///
+  /// Cycles: 8
+  ///
   /// Flags: Z 0 1 -
-  fn bit_1_h(&mut self, _instr: u8) -> GbResult<()> {
+  fn bit_1_h(&mut self, _instr: u8) -> GbResult<u32> {
     self.bit_r(1, self.hl.hi);
-    Ok(())
+    Ok(8)
   }
 
   /// Bit 1 L
   ///
   /// Test bit 1
   ///
+  /// Cycles: 8
+  ///
   /// Flags: Z 0 1 -
-  fn bit_1_l(&mut self, _instr: u8) -> GbResult<()> {
+  fn bit_1_l(&mut self, _instr: u8) -> GbResult<u32> {
     self.bit_r(1, self.hl.lo);
-    Ok(())
+    Ok(8)
   }
 
   /// Bit 1 (HL)
   ///
   /// Test bit 1
   ///
+  /// Cycles: 12
+  ///
   /// Flags: Z 0 1 -
-  fn bit_1__hl_(&mut self, _instr: u8) -> GbResult<()> {
+  fn bit_1__hl_(&mut self, _instr: u8) -> GbResult<u32> {
     let val = self.bus.lazy_dref().read8(self.hl.hilo())?;
     self.bit_r(1, val);
-    Ok(())
+    Ok(12)
   }
 
   /// Bit 1 A
   ///
   /// Test bit 1
   ///
+  /// Cycles: 8
+  ///
   /// Flags: Z 0 1 -
-  fn bit_1_a(&mut self, _instr: u8) -> GbResult<()> {
+  fn bit_1_a(&mut self, _instr: u8) -> GbResult<u32> {
     self.bit_r(1, self.af.hi);
-    Ok(())
+    Ok(8)
   }
 
   /// Bit 2 B
   ///
   /// Test bit 2
   ///
+  /// Cycles: 8
+  ///
   /// Flags: Z 0 1 -
-  fn bit_2_b(&mut self, _instr: u8) -> GbResult<()> {
+  fn bit_2_b(&mut self, _instr: u8) -> GbResult<u32> {
     self.bit_r(2, self.bc.hi);
-    Ok(())
+    Ok(8)
   }
 
   /// Bit 2 C
   ///
   /// Test bit 2
   ///
+  /// Cycles: 8
+  ///
   /// Flags: Z 0 1 -
-  fn bit_2_c(&mut self, _instr: u8) -> GbResult<()> {
+  fn bit_2_c(&mut self, _instr: u8) -> GbResult<u32> {
     self.bit_r(2, self.bc.lo);
-    Ok(())
+    Ok(8)
   }
 
   /// Bit 2 D
   ///
   /// Test bit 2
   ///
+  /// Cycles: 8
+  ///
   /// Flags: Z 0 1 -
-  fn bit_2_d(&mut self, _instr: u8) -> GbResult<()> {
+  fn bit_2_d(&mut self, _instr: u8) -> GbResult<u32> {
     self.bit_r(2, self.de.hi);
-    Ok(())
+    Ok(8)
   }
 
   /// Bit 2 E
   ///
   /// Test bit 2
   ///
+  /// Cycles: 8
+  ///
   /// Flags: Z 0 1 -
-  fn bit_2_e(&mut self, _instr: u8) -> GbResult<()> {
+  fn bit_2_e(&mut self, _instr: u8) -> GbResult<u32> {
     self.bit_r(2, self.de.lo);
-    Ok(())
+    Ok(8)
   }
 
   /// Bit 2 H
   ///
   /// Test bit 2
   ///
+  /// Cycles: 8
+  ///
   /// Flags: Z 0 1 -
-  fn bit_2_h(&mut self, _instr: u8) -> GbResult<()> {
+  fn bit_2_h(&mut self, _instr: u8) -> GbResult<u32> {
     self.bit_r(2, self.hl.hi);
-    Ok(())
+    Ok(8)
   }
 
   /// Bit 2 L
   ///
   /// Test bit 2
   ///
+  /// Cycles: 8
+  ///
   /// Flags: Z 0 1 -
-  fn bit_2_l(&mut self, _instr: u8) -> GbResult<()> {
+  fn bit_2_l(&mut self, _instr: u8) -> GbResult<u32> {
     self.bit_r(2, self.hl.lo);
-    Ok(())
+    Ok(8)
   }
 
   /// Bit 2 (HL)
   ///
   /// Test bit 2
   ///
+  /// Cycles: 12
+  ///
   /// Flags: Z 0 1 -
-  fn bit_2__hl_(&mut self, _instr: u8) -> GbResult<()> {
+  fn bit_2__hl_(&mut self, _instr: u8) -> GbResult<u32> {
     let val = self.bus.lazy_dref().read8(self.hl.hilo())?;
     self.bit_r(2, val);
-    Ok(())
+    Ok(12)
   }
 
   /// Bit 2 A
   ///
   /// Test bit 2
   ///
+  /// Cycles: 8
+  ///
   /// Flags: Z 0 1 -
-  fn bit_2_a(&mut self, _instr: u8) -> GbResult<()> {
+  fn bit_2_a(&mut self, _instr: u8) -> GbResult<u32> {
     self.bit_r(2, self.af.hi);
-    Ok(())
+    Ok(8)
   }
 
   /// Bit 3 B
   ///
   /// Test bit 3
   ///
+  /// Cycles: 8
+  ///
   /// Flags: Z 0 1 -
-  fn bit_3_b(&mut self, _instr: u8) -> GbResult<()> {
+  fn bit_3_b(&mut self, _instr: u8) -> GbResult<u32> {
     self.bit_r(3, self.bc.hi);
-    Ok(())
+    Ok(8)
   }
 
   /// Bit 3 C
   ///
   /// Test bit 3
   ///
+  /// Cycles: 8
+  ///
   /// Flags: Z 0 1 -
-  fn bit_3_c(&mut self, _instr: u8) -> GbResult<()> {
+  fn bit_3_c(&mut self, _instr: u8) -> GbResult<u32> {
     self.bit_r(3, self.bc.lo);
-    Ok(())
+    Ok(8)
   }
 
   /// Bit 3 D
   ///
   /// Test bit 3
   ///
+  /// Cycles: 8
+  ///
   /// Flags: Z 0 1 -
-  fn bit_3_d(&mut self, _instr: u8) -> GbResult<()> {
+  fn bit_3_d(&mut self, _instr: u8) -> GbResult<u32> {
     self.bit_r(3, self.de.hi);
-    Ok(())
+    Ok(8)
   }
 
   /// Bit 3 E
   ///
   /// Test bit 3
   ///
+  /// Cycles: 8
+  ///
   /// Flags: Z 0 1 -
-  fn bit_3_e(&mut self, _instr: u8) -> GbResult<()> {
+  fn bit_3_e(&mut self, _instr: u8) -> GbResult<u32> {
     self.bit_r(3, self.de.lo);
-    Ok(())
+    Ok(8)
   }
 
   /// Bit 3 H
   ///
   /// Test bit 3
   ///
+  /// Cycles: 8
+  ///
   /// Flags: Z 0 1 -
-  fn bit_3_h(&mut self, _instr: u8) -> GbResult<()> {
+  fn bit_3_h(&mut self, _instr: u8) -> GbResult<u32> {
     self.bit_r(3, self.hl.hi);
-    Ok(())
+    Ok(8)
   }
 
   /// Bit 3 L
   ///
   /// Test bit 3
   ///
+  /// Cycles: 8
+  ///
   /// Flags: Z 0 1 -
-  fn bit_3_l(&mut self, _instr: u8) -> GbResult<()> {
+  fn bit_3_l(&mut self, _instr: u8) -> GbResult<u32> {
     self.bit_r(3, self.hl.lo);
-    Ok(())
+    Ok(8)
   }
 
   /// Bit 3 (HL)
   ///
   /// Test bit 3
   ///
+  /// Cycles: 12
+  ///
   /// Flags: Z 0 1 -
-  fn bit_3__hl_(&mut self, _instr: u8) -> GbResult<()> {
+  fn bit_3__hl_(&mut self, _instr: u8) -> GbResult<u32> {
     let val = self.bus.lazy_dref().read8(self.hl.hilo())?;
     self.bit_r(3, val);
-    Ok(())
+    Ok(12)
   }
 
   /// Bit 3 A
   ///
   /// Test bit 3
   ///
+  /// Cycles: 8
+  ///
   /// Flags: Z 0 1 -
-  fn bit_3_a(&mut self, _instr: u8) -> GbResult<()> {
+  fn bit_3_a(&mut self, _instr: u8) -> GbResult<u32> {
     self.bit_r(3, self.af.hi);
-    Ok(())
+    Ok(8)
   }
 
   /// Bit 4 B
   ///
   /// Test bit 4
   ///
+  /// Cycles: 8
+  ///
   /// Flags: Z 0 1 -
-  fn bit_4_b(&mut self, _instr: u8) -> GbResult<()> {
+  fn bit_4_b(&mut self, _instr: u8) -> GbResult<u32> {
     self.bit_r(4, self.bc.hi);
-    Ok(())
+    Ok(8)
   }
 
   /// Bit 4 C
   ///
   /// Test bit 4
   ///
+  /// Cycles: 8
+  ///
   /// Flags: Z 0 1 -
-  fn bit_4_c(&mut self, _instr: u8) -> GbResult<()> {
+  fn bit_4_c(&mut self, _instr: u8) -> GbResult<u32> {
     self.bit_r(4, self.bc.lo);
-    Ok(())
+    Ok(8)
   }
 
   /// Bit 4 D
   ///
   /// Test bit 4
   ///
+  /// Cycles: 8
+  ///
   /// Flags: Z 0 1 -
-  fn bit_4_d(&mut self, _instr: u8) -> GbResult<()> {
+  fn bit_4_d(&mut self, _instr: u8) -> GbResult<u32> {
     self.bit_r(4, self.de.hi);
-    Ok(())
+    Ok(8)
   }
 
   /// Bit 4 E
   ///
   /// Test bit 4
   ///
+  /// Cycles: 8
+  ///
   /// Flags: Z 0 1 -
-  fn bit_4_e(&mut self, _instr: u8) -> GbResult<()> {
+  fn bit_4_e(&mut self, _instr: u8) -> GbResult<u32> {
     self.bit_r(4, self.de.lo);
-    Ok(())
+    Ok(8)
   }
 
   /// Bit 4 H
   ///
   /// Test bit 4
   ///
+  /// Cycles: 8
+  ///
   /// Flags: Z 0 1 -
-  fn bit_4_h(&mut self, _instr: u8) -> GbResult<()> {
+  fn bit_4_h(&mut self, _instr: u8) -> GbResult<u32> {
     self.bit_r(4, self.hl.hi);
-    Ok(())
+    Ok(8)
   }
 
   /// Bit 4 L
   ///
   /// Test bit 4
   ///
+  /// Cycles: 8
+  ///
   /// Flags: Z 0 1 -
-  fn bit_4_l(&mut self, _instr: u8) -> GbResult<()> {
+  fn bit_4_l(&mut self, _instr: u8) -> GbResult<u32> {
     self.bit_r(4, self.hl.lo);
-    Ok(())
+    Ok(8)
   }
 
   /// Bit 4 (HL)
   ///
   /// Test bit 4
   ///
+  /// Cycles: 12
+  ///
   /// Flags: Z 0 1 -
-  fn bit_4__hl_(&mut self, _instr: u8) -> GbResult<()> {
+  fn bit_4__hl_(&mut self, _instr: u8) -> GbResult<u32> {
     let val = self.bus.lazy_dref().read8(self.hl.hilo())?;
     self.bit_r(4, val);
-    Ok(())
+    Ok(12)
   }
 
   /// Bit 4 A
   ///
   /// Test bit 4
   ///
+  /// Cycles: 8
+  ///
   /// Flags: Z 0 1 -
-  fn bit_4_a(&mut self, _instr: u8) -> GbResult<()> {
+  fn bit_4_a(&mut self, _instr: u8) -> GbResult<u32> {
     self.bit_r(4, self.af.hi);
-    Ok(())
+    Ok(8)
   }
 
   /// Bit 5 B
   ///
   /// Test bit 5
   ///
+  /// Cycles: 8
+  ///
   /// Flags: Z 0 1 -
-  fn bit_5_b(&mut self, _instr: u8) -> GbResult<()> {
+  fn bit_5_b(&mut self, _instr: u8) -> GbResult<u32> {
     self.bit_r(5, self.bc.hi);
-    Ok(())
+    Ok(8)
   }
 
   /// Bit 5 C
   ///
   /// Test bit 5
   ///
+  /// Cycles: 8
+  ///
   /// Flags: Z 0 1 -
-  fn bit_5_c(&mut self, _instr: u8) -> GbResult<()> {
+  fn bit_5_c(&mut self, _instr: u8) -> GbResult<u32> {
     self.bit_r(5, self.bc.lo);
-    Ok(())
+    Ok(8)
   }
 
   /// Bit 5 D
   ///
   /// Test bit 5
   ///
+  /// Cycles: 8
+  ///
   /// Flags: Z 0 1 -
-  fn bit_5_d(&mut self, _instr: u8) -> GbResult<()> {
+  fn bit_5_d(&mut self, _instr: u8) -> GbResult<u32> {
     self.bit_r(5, self.de.hi);
-    Ok(())
+    Ok(8)
   }
 
   /// Bit 5 E
   ///
   /// Test bit 5
   ///
+  /// Cycles: 8
+  ///
   /// Flags: Z 0 1 -
-  fn bit_5_e(&mut self, _instr: u8) -> GbResult<()> {
+  fn bit_5_e(&mut self, _instr: u8) -> GbResult<u32> {
     self.bit_r(5, self.de.lo);
-    Ok(())
+    Ok(8)
   }
 
   /// Bit 5 H
   ///
   /// Test bit 5
   ///
+  /// Cycles: 8
+  ///
   /// Flags: Z 0 1 -
-  fn bit_5_h(&mut self, _instr: u8) -> GbResult<()> {
+  fn bit_5_h(&mut self, _instr: u8) -> GbResult<u32> {
     self.bit_r(5, self.hl.hi);
-    Ok(())
+    Ok(8)
   }
 
   /// Bit 5 L
   ///
   /// Test bit 5
   ///
+  /// Cycles: 8
+  ///
   /// Flags: Z 0 1 -
-  fn bit_5_l(&mut self, _instr: u8) -> GbResult<()> {
+  fn bit_5_l(&mut self, _instr: u8) -> GbResult<u32> {
     self.bit_r(5, self.hl.lo);
-    Ok(())
+    Ok(8)
   }
 
   /// Bit 5 (HL)
   ///
   /// Test bit 5
   ///
+  /// Cycles: 12
+  ///
   /// Flags: Z 0 1 -
-  fn bit_5__hl_(&mut self, _instr: u8) -> GbResult<()> {
+  fn bit_5__hl_(&mut self, _instr: u8) -> GbResult<u32> {
     let val = self.bus.lazy_dref().read8(self.hl.hilo())?;
     self.bit_r(5, val);
-    Ok(())
+    Ok(12)
   }
 
   /// Bit 5 A
   ///
   /// Test bit 5
   ///
+  /// Cycles: 8
+  ///
   /// Flags: Z 0 1 -
-  fn bit_5_a(&mut self, _instr: u8) -> GbResult<()> {
+  fn bit_5_a(&mut self, _instr: u8) -> GbResult<u32> {
     self.bit_r(5, self.af.hi);
-    Ok(())
+    Ok(8)
   }
 
   /// Bit 6 B
   ///
   /// Test bit 6
   ///
+  /// Cycles: 8
+  ///
   /// Flags: Z 0 1 -
-  fn bit_6_b(&mut self, _instr: u8) -> GbResult<()> {
+  fn bit_6_b(&mut self, _instr: u8) -> GbResult<u32> {
     self.bit_r(6, self.bc.hi);
-    Ok(())
+    Ok(8)
   }
 
   /// Bit 6 C
   ///
   /// Test bit 6
   ///
+  /// Cycles: 8
+  ///
   /// Flags: Z 0 1 -
-  fn bit_6_c(&mut self, _instr: u8) -> GbResult<()> {
+  fn bit_6_c(&mut self, _instr: u8) -> GbResult<u32> {
     self.bit_r(6, self.bc.lo);
-    Ok(())
+    Ok(8)
   }
 
   /// Bit 6 D
   ///
   /// Test bit 6
   ///
+  /// Cycles: 8
+  ///
   /// Flags: Z 0 1 -
-  fn bit_6_d(&mut self, _instr: u8) -> GbResult<()> {
+  fn bit_6_d(&mut self, _instr: u8) -> GbResult<u32> {
     self.bit_r(6, self.de.hi);
-    Ok(())
+    Ok(8)
   }
 
   /// Bit 6 E
   ///
   /// Test bit 6
   ///
+  /// Cycles: 8
+  ///
   /// Flags: Z 0 1 -
-  fn bit_6_e(&mut self, _instr: u8) -> GbResult<()> {
+  fn bit_6_e(&mut self, _instr: u8) -> GbResult<u32> {
     self.bit_r(6, self.de.lo);
-    Ok(())
+    Ok(8)
   }
 
   /// Bit 6 H
   ///
   /// Test bit 6
   ///
+  /// Cycles: 8
+  ///
   /// Flags: Z 0 1 -
-  fn bit_6_h(&mut self, _instr: u8) -> GbResult<()> {
+  fn bit_6_h(&mut self, _instr: u8) -> GbResult<u32> {
     self.bit_r(6, self.hl.hi);
-    Ok(())
+    Ok(8)
   }
 
   /// Bit 6 L
   ///
   /// Test bit 6
   ///
+  /// Cycles: 8
+  ///
   /// Flags: Z 0 1 -
-  fn bit_6_l(&mut self, _instr: u8) -> GbResult<()> {
+  fn bit_6_l(&mut self, _instr: u8) -> GbResult<u32> {
     self.bit_r(6, self.hl.lo);
-    Ok(())
+    Ok(8)
   }
 
   /// Bit 6 (HL)
   ///
   /// Test bit 6
   ///
+  /// Cycles: 12
+  ///
   /// Flags: Z 0 1 -
-  fn bit_6__hl_(&mut self, _instr: u8) -> GbResult<()> {
+  fn bit_6__hl_(&mut self, _instr: u8) -> GbResult<u32> {
     let val = self.bus.lazy_dref().read8(self.hl.hilo())?;
     self.bit_r(6, val);
-    Ok(())
+    Ok(12)
   }
 
   /// Bit 6 A
   ///
   /// Test bit 6
   ///
+  /// Cycles: 8
+  ///
   /// Flags: Z 0 1 -
-  fn bit_6_a(&mut self, _instr: u8) -> GbResult<()> {
+  fn bit_6_a(&mut self, _instr: u8) -> GbResult<u32> {
     self.bit_r(6, self.af.hi);
-    Ok(())
+    Ok(8)
   }
 
   /// Bit 7 B
   ///
   /// Test bit 7
   ///
+  /// Cycles: 8
+  ///
   /// Flags: Z 0 1 -
-  fn bit_7_b(&mut self, _instr: u8) -> GbResult<()> {
+  fn bit_7_b(&mut self, _instr: u8) -> GbResult<u32> {
     self.bit_r(7, self.bc.hi);
-    Ok(())
+    Ok(8)
   }
 
   /// Bit 7 C
   ///
   /// Test bit 7
   ///
+  /// Cycles: 8
+  ///
   /// Flags: Z 0 1 -
-  fn bit_7_c(&mut self, _instr: u8) -> GbResult<()> {
+  fn bit_7_c(&mut self, _instr: u8) -> GbResult<u32> {
     self.bit_r(7, self.bc.lo);
-    Ok(())
+    Ok(8)
   }
 
   /// Bit 7 D
   ///
   /// Test bit 7
   ///
+  /// Cycles: 8
+  ///
   /// Flags: Z 0 1 -
-  fn bit_7_d(&mut self, _instr: u8) -> GbResult<()> {
+  fn bit_7_d(&mut self, _instr: u8) -> GbResult<u32> {
     self.bit_r(7, self.de.hi);
-    Ok(())
+    Ok(8)
   }
 
   /// Bit 7 E
   ///
   /// Test bit 7
   ///
+  /// Cycles: 8
+  ///
   /// Flags: Z 0 1 -
-  fn bit_7_e(&mut self, _instr: u8) -> GbResult<()> {
+  fn bit_7_e(&mut self, _instr: u8) -> GbResult<u32> {
     self.bit_r(7, self.de.lo);
-    Ok(())
+    Ok(8)
   }
 
   /// Bit 7 H
   ///
   /// Test bit 7
   ///
+  /// Cycles: 8
+  ///
   /// Flags: Z 0 1 -
-  fn bit_7_h(&mut self, _instr: u8) -> GbResult<()> {
+  fn bit_7_h(&mut self, _instr: u8) -> GbResult<u32> {
     self.bit_r(7, self.hl.hi);
-    Ok(())
+    Ok(8)
   }
 
   /// Bit 7 L
   ///
   /// Test bit 7
   ///
+  /// Cycles: 8
+  ///
   /// Flags: Z 0 1 -
-  fn bit_7_l(&mut self, _instr: u8) -> GbResult<()> {
+  fn bit_7_l(&mut self, _instr: u8) -> GbResult<u32> {
     self.bit_r(7, self.hl.lo);
-    Ok(())
+    Ok(8)
   }
 
   /// Bit 7 (HL)
   ///
   /// Test bit 7
   ///
+  /// Cycles: 12
+  ///
   /// Flags: Z 0 1 -
-  fn bit_7__hl_(&mut self, _instr: u8) -> GbResult<()> {
+  fn bit_7__hl_(&mut self, _instr: u8) -> GbResult<u32> {
     let val = self.bus.lazy_dref().read8(self.hl.hilo())?;
     self.bit_r(7, val);
-    Ok(())
+    Ok(12)
   }
 
   /// Bit 7 A
   ///
   /// Test bit 7
   ///
+  /// Cycles: 8
+  ///
   /// Flags: Z 0 1 -
-  fn bit_7_a(&mut self, _instr: u8) -> GbResult<()> {
+  fn bit_7_a(&mut self, _instr: u8) -> GbResult<u32> {
     self.bit_r(7, self.af.hi);
-    Ok(())
+    Ok(8)
   }
 
   /// RES 0 B
   ///
   /// Reset bit 0
   ///
+  /// Cycles: 8
+  ///
   /// Flags: - - - -
-  fn res_0_b(&mut self, _instr: u8) -> GbResult<()> {
+  fn res_0_b(&mut self, _instr: u8) -> GbResult<u32> {
     self.bc.hi = self.res_r(0, self.bc.hi);
-    Ok(())
+    Ok(8)
   }
 
   /// RES 0 C
   ///
   /// Reset bit 0
   ///
+  /// Cycles: 8
+  ///
   /// Flags: - - - -
-  fn res_0_c(&mut self, _instr: u8) -> GbResult<()> {
+  fn res_0_c(&mut self, _instr: u8) -> GbResult<u32> {
     self.bc.lo = self.res_r(0, self.bc.lo);
-    Ok(())
+    Ok(8)
   }
 
   /// RES 0 D
   ///
   /// Reset bit 0
   ///
+  /// Cycles: 8
+  ///
   /// Flags: - - - -
-  fn res_0_d(&mut self, _instr: u8) -> GbResult<()> {
+  fn res_0_d(&mut self, _instr: u8) -> GbResult<u32> {
     self.de.hi = self.res_r(0, self.de.hi);
-    Ok(())
+    Ok(8)
   }
 
   /// RES 0 E
   ///
   /// Reset bit 0
   ///
+  /// Cycles: 8
+  ///
   /// Flags: - - - -
-  fn res_0_e(&mut self, _instr: u8) -> GbResult<()> {
+  fn res_0_e(&mut self, _instr: u8) -> GbResult<u32> {
     self.de.lo = self.res_r(0, self.de.lo);
-    Ok(())
+    Ok(8)
   }
 
   /// RES 0 H
   ///
   /// Reset bit 0
   ///
+  /// Cycles: 8
+  ///
   /// Flags: - - - -
-  fn res_0_h(&mut self, _instr: u8) -> GbResult<()> {
+  fn res_0_h(&mut self, _instr: u8) -> GbResult<u32> {
     self.hl.hi = self.res_r(0, self.hl.hi);
-    Ok(())
+    Ok(8)
   }
 
   /// RES 0 L
   ///
   /// Reset bit 0
   ///
+  /// Cycles: 8
+  ///
   /// Flags: - - - -
-  fn res_0_l(&mut self, _instr: u8) -> GbResult<()> {
+  fn res_0_l(&mut self, _instr: u8) -> GbResult<u32> {
     self.hl.lo = self.res_r(0, self.hl.lo);
-    Ok(())
+    Ok(8)
   }
 
   /// RES 0 (HL)
   ///
   /// Reset bit 0
   ///
+  /// Cycles: 16
+  ///
   /// Flags: - - - -
-  fn res_0__hl_(&mut self, _instr: u8) -> GbResult<()> {
+  fn res_0__hl_(&mut self, _instr: u8) -> GbResult<u32> {
     let val = self.bus.lazy_dref().read8(self.hl.hilo())?;
     let val = self.res_r(0, val);
-    self.bus.lazy_dref_mut().write8(self.hl.hilo(), val)
+    self.bus.lazy_dref_mut().write8(self.hl.hilo(), val)?;
+    Ok(16)
   }
 
   /// RES 0 A
   ///
   /// Reset bit 0
   ///
+  /// Cycles: 8
+  ///
   /// Flags: - - - -
-  fn res_0_a(&mut self, _instr: u8) -> GbResult<()> {
+  fn res_0_a(&mut self, _instr: u8) -> GbResult<u32> {
     self.af.hi = self.res_r(0, self.af.hi);
-    Ok(())
+    Ok(8)
   }
 
   /// RES 1 B
   ///
   /// Reset bit 1
   ///
+  /// Cycles: 8
+  ///
   /// Flags: - - - -
-  fn res_1_b(&mut self, _instr: u8) -> GbResult<()> {
+  fn res_1_b(&mut self, _instr: u8) -> GbResult<u32> {
     self.bc.hi = self.res_r(1, self.bc.hi);
-    Ok(())
+    Ok(8)
   }
 
   /// RES 1 C
   ///
   /// Reset bit 1
   ///
+  /// Cycles: 8
+  ///
   /// Flags: - - - -
-  fn res_1_c(&mut self, _instr: u8) -> GbResult<()> {
+  fn res_1_c(&mut self, _instr: u8) -> GbResult<u32> {
     self.bc.lo = self.res_r(1, self.bc.lo);
-    Ok(())
+    Ok(8)
   }
 
   /// RES 1 D
   ///
   /// Reset bit 1
   ///
+  /// Cycles: 8
+  ///
   /// Flags: - - - -
-  fn res_1_d(&mut self, _instr: u8) -> GbResult<()> {
+  fn res_1_d(&mut self, _instr: u8) -> GbResult<u32> {
     self.de.hi = self.res_r(1, self.de.hi);
-    Ok(())
+    Ok(8)
   }
 
   /// RES 1 E
   ///
   /// Reset bit 1
   ///
+  /// Cycles: 8
+  ///
   /// Flags: - - - -
-  fn res_1_e(&mut self, _instr: u8) -> GbResult<()> {
+  fn res_1_e(&mut self, _instr: u8) -> GbResult<u32> {
     self.de.lo = self.res_r(1, self.de.lo);
-    Ok(())
+    Ok(8)
   }
 
   /// RES 1 H
   ///
   /// Reset bit 1
   ///
+  /// Cycles: 8
+  ///
   /// Flags: - - - -
-  fn res_1_h(&mut self, _instr: u8) -> GbResult<()> {
+  fn res_1_h(&mut self, _instr: u8) -> GbResult<u32> {
     self.hl.hi = self.res_r(1, self.hl.hi);
-    Ok(())
+    Ok(8)
   }
 
   /// RES 1 L
   ///
   /// Reset bit 1
   ///
+  /// Cycles: 8
+  ///
   /// Flags: - - - -
-  fn res_1_l(&mut self, _instr: u8) -> GbResult<()> {
+  fn res_1_l(&mut self, _instr: u8) -> GbResult<u32> {
     self.hl.lo = self.res_r(1, self.hl.lo);
-    Ok(())
+    Ok(8)
   }
 
   /// RES 1 (HL)
   ///
   /// Reset bit 1
   ///
+  /// Cycles: 16
+  ///
   /// Flags: - - - -
-  fn res_1__hl_(&mut self, _instr: u8) -> GbResult<()> {
+  fn res_1__hl_(&mut self, _instr: u8) -> GbResult<u32> {
     let val = self.bus.lazy_dref().read8(self.hl.hilo())?;
     let val = self.res_r(1, val);
-    self.bus.lazy_dref_mut().write8(self.hl.hilo(), val)
+    self.bus.lazy_dref_mut().write8(self.hl.hilo(), val)?;
+    Ok(16)
   }
 
   /// RES 1 A
   ///
   /// Reset bit 1
   ///
+  /// Cycles: 8
+  ///
   /// Flags: - - - -
-  fn res_1_a(&mut self, _instr: u8) -> GbResult<()> {
+  fn res_1_a(&mut self, _instr: u8) -> GbResult<u32> {
     self.af.hi = self.res_r(1, self.af.hi);
-    Ok(())
+    Ok(8)
   }
 
   /// RES 2 B
   ///
   /// Reset bit 2
   ///
+  /// Cycles: 8
+  ///
   /// Flags: - - - -
-  fn res_2_b(&mut self, _instr: u8) -> GbResult<()> {
+  fn res_2_b(&mut self, _instr: u8) -> GbResult<u32> {
     self.bc.hi = self.res_r(2, self.bc.hi);
-    Ok(())
+    Ok(8)
   }
 
   /// RES 2 C
   ///
   /// Reset bit 2
   ///
+  /// Cycles: 8
+  ///
   /// Flags: - - - -
-  fn res_2_c(&mut self, _instr: u8) -> GbResult<()> {
+  fn res_2_c(&mut self, _instr: u8) -> GbResult<u32> {
     self.bc.lo = self.res_r(2, self.bc.lo);
-    Ok(())
+    Ok(8)
   }
 
   /// RES 2 D
   ///
   /// Reset bit 2
   ///
+  /// Cycles: 8
+  ///
   /// Flags: - - - -
-  fn res_2_d(&mut self, _instr: u8) -> GbResult<()> {
+  fn res_2_d(&mut self, _instr: u8) -> GbResult<u32> {
     self.de.hi = self.res_r(2, self.de.hi);
-    Ok(())
+    Ok(8)
   }
 
   /// RES 2 E
   ///
   /// Reset bit 2
   ///
+  /// Cycles: 8
+  ///
   /// Flags: - - - -
-  fn res_2_e(&mut self, _instr: u8) -> GbResult<()> {
+  fn res_2_e(&mut self, _instr: u8) -> GbResult<u32> {
     self.de.lo = self.res_r(2, self.de.lo);
-    Ok(())
+    Ok(8)
   }
 
   /// RES 2 H
   ///
   /// Reset bit 2
   ///
+  /// Cycles: 8
+  ///
   /// Flags: - - - -
-  fn res_2_h(&mut self, _instr: u8) -> GbResult<()> {
+  fn res_2_h(&mut self, _instr: u8) -> GbResult<u32> {
     self.hl.hi = self.res_r(2, self.hl.hi);
-    Ok(())
+    Ok(8)
   }
 
   /// RES 2 L
   ///
   /// Reset bit 2
   ///
+  /// Cycles: 8
+  ///
   /// Flags: - - - -
-  fn res_2_l(&mut self, _instr: u8) -> GbResult<()> {
+  fn res_2_l(&mut self, _instr: u8) -> GbResult<u32> {
     self.hl.lo = self.res_r(2, self.hl.lo);
-    Ok(())
+    Ok(8)
   }
 
   /// RES 2 (HL)
   ///
   /// Reset bit 2
   ///
+  /// Cycles: 16
+  ///
   /// Flags: - - - -
-  fn res_2__hl_(&mut self, _instr: u8) -> GbResult<()> {
+  fn res_2__hl_(&mut self, _instr: u8) -> GbResult<u32> {
     let val = self.bus.lazy_dref().read8(self.hl.hilo())?;
     let val = self.res_r(2, val);
-    self.bus.lazy_dref_mut().write8(self.hl.hilo(), val)
+    self.bus.lazy_dref_mut().write8(self.hl.hilo(), val)?;
+    Ok(16)
   }
 
   /// RES 2 A
   ///
   /// Reset bit 2
   ///
+  /// Cycles: 8
+  ///
   /// Flags: - - - -
-  fn res_2_a(&mut self, _instr: u8) -> GbResult<()> {
+  fn res_2_a(&mut self, _instr: u8) -> GbResult<u32> {
     self.af.hi = self.res_r(2, self.af.hi);
-    Ok(())
+    Ok(8)
   }
 
   /// RES 3 B
   ///
   /// Reset bit 3
   ///
+  /// Cycles: 8
+  ///
   /// Flags: - - - -
-  fn res_3_b(&mut self, _instr: u8) -> GbResult<()> {
+  fn res_3_b(&mut self, _instr: u8) -> GbResult<u32> {
     self.bc.hi = self.res_r(3, self.bc.hi);
-    Ok(())
+    Ok(8)
   }
 
   /// RES 3 C
   ///
   /// Reset bit 3
   ///
+  /// Cycles: 8
+  ///
   /// Flags: - - - -
-  fn res_3_c(&mut self, _instr: u8) -> GbResult<()> {
+  fn res_3_c(&mut self, _instr: u8) -> GbResult<u32> {
     self.bc.lo = self.res_r(3, self.bc.lo);
-    Ok(())
+    Ok(8)
   }
 
   /// RES 3 D
   ///
   /// Reset bit 3
   ///
+  /// Cycles: 8
+  ///
   /// Flags: - - - -
-  fn res_3_d(&mut self, _instr: u8) -> GbResult<()> {
+  fn res_3_d(&mut self, _instr: u8) -> GbResult<u32> {
     self.de.hi = self.res_r(3, self.de.hi);
-    Ok(())
+    Ok(8)
   }
 
   /// RES 3 E
   ///
   /// Reset bit 3
   ///
+  /// Cycles: 8
+  ///
   /// Flags: - - - -
-  fn res_3_e(&mut self, _instr: u8) -> GbResult<()> {
+  fn res_3_e(&mut self, _instr: u8) -> GbResult<u32> {
     self.de.lo = self.res_r(3, self.de.lo);
-    Ok(())
+    Ok(8)
   }
 
   /// RES 3 H
   ///
   /// Reset bit 3
   ///
+  /// Cycles: 8
+  ///
   /// Flags: - - - -
-  fn res_3_h(&mut self, _instr: u8) -> GbResult<()> {
+  fn res_3_h(&mut self, _instr: u8) -> GbResult<u32> {
     self.hl.hi = self.res_r(3, self.hl.hi);
-    Ok(())
+    Ok(8)
   }
 
   /// RES 3 L
   ///
   /// Reset bit 3
   ///
+  /// Cycles: 8
+  ///
   /// Flags: - - - -
-  fn res_3_l(&mut self, _instr: u8) -> GbResult<()> {
+  fn res_3_l(&mut self, _instr: u8) -> GbResult<u32> {
     self.hl.lo = self.res_r(3, self.hl.lo);
-    Ok(())
+    Ok(8)
   }
 
   /// RES 3 (HL)
   ///
   /// Reset bit 3
   ///
+  /// Cycles: 16
+  ///
   /// Flags: - - - -
-  fn res_3__hl_(&mut self, _instr: u8) -> GbResult<()> {
+  fn res_3__hl_(&mut self, _instr: u8) -> GbResult<u32> {
     let val = self.bus.lazy_dref().read8(self.hl.hilo())?;
     let val = self.res_r(3, val);
-    self.bus.lazy_dref_mut().write8(self.hl.hilo(), val)
+    self.bus.lazy_dref_mut().write8(self.hl.hilo(), val)?;
+    Ok(16)
   }
 
   /// RES 3 A
   ///
   /// Reset bit 3
   ///
+  /// Cycles: 8
+  ///
   /// Flags: - - - -
-  fn res_3_a(&mut self, _instr: u8) -> GbResult<()> {
+  fn res_3_a(&mut self, _instr: u8) -> GbResult<u32> {
     self.af.hi = self.res_r(3, self.af.hi);
-    Ok(())
+    Ok(8)
   }
 
   /// RES 4 B
   ///
   /// Reset bit 4
   ///
+  /// Cycles: 8
+  ///
   /// Flags: - - - -
-  fn res_4_b(&mut self, _instr: u8) -> GbResult<()> {
+  fn res_4_b(&mut self, _instr: u8) -> GbResult<u32> {
     self.bc.hi = self.res_r(4, self.bc.hi);
-    Ok(())
+    Ok(8)
   }
 
   /// RES 4 C
   ///
   /// Reset bit 4
   ///
+  /// Cycles: 8
+  ///
   /// Flags: - - - -
-  fn res_4_c(&mut self, _instr: u8) -> GbResult<()> {
+  fn res_4_c(&mut self, _instr: u8) -> GbResult<u32> {
     self.bc.lo = self.res_r(4, self.bc.lo);
-    Ok(())
+    Ok(8)
   }
 
   /// RES 4 D
   ///
   /// Reset bit 4
   ///
+  /// Cycles: 8
+  ///
   /// Flags: - - - -
-  fn res_4_d(&mut self, _instr: u8) -> GbResult<()> {
+  fn res_4_d(&mut self, _instr: u8) -> GbResult<u32> {
     self.de.hi = self.res_r(4, self.de.hi);
-    Ok(())
+    Ok(8)
   }
 
   /// RES 4 E
   ///
   /// Reset bit 4
   ///
+  /// Cycles: 8
+  ///
   /// Flags: - - - -
-  fn res_4_e(&mut self, _instr: u8) -> GbResult<()> {
+  fn res_4_e(&mut self, _instr: u8) -> GbResult<u32> {
     self.de.lo = self.res_r(4, self.de.lo);
-    Ok(())
+    Ok(8)
   }
 
   /// RES 4 H
   ///
   /// Reset bit 4
   ///
+  /// Cycles: 8
+  ///
   /// Flags: - - - -
-  fn res_4_h(&mut self, _instr: u8) -> GbResult<()> {
+  fn res_4_h(&mut self, _instr: u8) -> GbResult<u32> {
     self.hl.hi = self.res_r(4, self.hl.hi);
-    Ok(())
+    Ok(8)
   }
 
   /// RES 4 L
   ///
   /// Reset bit 4
   ///
+  /// Cycles: 8
+  ///
   /// Flags: - - - -
-  fn res_4_l(&mut self, _instr: u8) -> GbResult<()> {
+  fn res_4_l(&mut self, _instr: u8) -> GbResult<u32> {
     self.hl.lo = self.res_r(4, self.hl.lo);
-    Ok(())
+    Ok(8)
   }
 
   /// RES 4 (HL)
   ///
   /// Reset bit 4
   ///
+  /// Cycles: 16
+  ///
   /// Flags: - - - -
-  fn res_4__hl_(&mut self, _instr: u8) -> GbResult<()> {
+  fn res_4__hl_(&mut self, _instr: u8) -> GbResult<u32> {
     let val = self.bus.lazy_dref().read8(self.hl.hilo())?;
     let val = self.res_r(4, val);
-    self.bus.lazy_dref_mut().write8(self.hl.hilo(), val)
+    self.bus.lazy_dref_mut().write8(self.hl.hilo(), val)?;
+    Ok(16)
   }
 
   /// RES 4 A
   ///
   /// Reset bit 4
   ///
+  /// Cycles: 8
+  ///
   /// Flags: - - - -
-  fn res_4_a(&mut self, _instr: u8) -> GbResult<()> {
+  fn res_4_a(&mut self, _instr: u8) -> GbResult<u32> {
     self.af.hi = self.res_r(4, self.af.hi);
-    Ok(())
+    Ok(8)
   }
 
   /// RES 5 B
   ///
   /// Reset bit 5
   ///
+  /// Cycles: 8
+  ///
   /// Flags: - - - -
-  fn res_5_b(&mut self, _instr: u8) -> GbResult<()> {
+  fn res_5_b(&mut self, _instr: u8) -> GbResult<u32> {
     self.bc.hi = self.res_r(5, self.bc.hi);
-    Ok(())
+    Ok(8)
   }
 
   /// RES 5 C
   ///
   /// Reset bit 5
   ///
+  /// Cycles: 8
+  ///
   /// Flags: - - - -
-  fn res_5_c(&mut self, _instr: u8) -> GbResult<()> {
+  fn res_5_c(&mut self, _instr: u8) -> GbResult<u32> {
     self.bc.lo = self.res_r(5, self.bc.lo);
-    Ok(())
+    Ok(8)
   }
 
   /// RES 5 D
   ///
   /// Reset bit 5
   ///
+  /// Cycles: 8
+  ///
   /// Flags: - - - -
-  fn res_5_d(&mut self, _instr: u8) -> GbResult<()> {
+  fn res_5_d(&mut self, _instr: u8) -> GbResult<u32> {
     self.de.hi = self.res_r(5, self.de.hi);
-    Ok(())
+    Ok(8)
   }
 
   /// RES 5 E
   ///
   /// Reset bit 5
   ///
+  /// Cycles: 8
+  ///
   /// Flags: - - - -
-  fn res_5_e(&mut self, _instr: u8) -> GbResult<()> {
+  fn res_5_e(&mut self, _instr: u8) -> GbResult<u32> {
     self.de.lo = self.res_r(5, self.de.lo);
-    Ok(())
+    Ok(8)
   }
 
   /// RES 5 H
   ///
   /// Reset bit 5
   ///
+  /// Cycles: 8
+  ///
   /// Flags: - - - -
-  fn res_5_h(&mut self, _instr: u8) -> GbResult<()> {
+  fn res_5_h(&mut self, _instr: u8) -> GbResult<u32> {
     self.hl.hi = self.res_r(5, self.hl.hi);
-    Ok(())
+    Ok(8)
   }
 
   /// RES 5 L
   ///
   /// Reset bit 5
   ///
+  /// Cycles: 8
+  ///
   /// Flags: - - - -
-  fn res_5_l(&mut self, _instr: u8) -> GbResult<()> {
+  fn res_5_l(&mut self, _instr: u8) -> GbResult<u32> {
     self.hl.lo = self.res_r(5, self.hl.lo);
-    Ok(())
+    Ok(8)
   }
 
   /// RES 5 (HL)
   ///
   /// Reset bit 5
   ///
+  /// Cycles: 16
+  ///
   /// Flags: - - - -
-  fn res_5__hl_(&mut self, _instr: u8) -> GbResult<()> {
+  fn res_5__hl_(&mut self, _instr: u8) -> GbResult<u32> {
     let val = self.bus.lazy_dref().read8(self.hl.hilo())?;
     let val = self.res_r(5, val);
-    self.bus.lazy_dref_mut().write8(self.hl.hilo(), val)
+    self.bus.lazy_dref_mut().write8(self.hl.hilo(), val)?;
+    Ok(16)
   }
 
   /// RES 5 A
   ///
   /// Reset bit 5
   ///
+  /// Cycles: 8
+  ///
   /// Flags: - - - -
-  fn res_5_a(&mut self, _instr: u8) -> GbResult<()> {
+  fn res_5_a(&mut self, _instr: u8) -> GbResult<u32> {
     self.af.hi = self.res_r(5, self.af.hi);
-    Ok(())
+    Ok(8)
   }
 
   /// RES 6 B
   ///
   /// Reset bit 6
   ///
+  /// Cycles: 8
+  ///
   /// Flags: - - - -
-  fn res_6_b(&mut self, _instr: u8) -> GbResult<()> {
+  fn res_6_b(&mut self, _instr: u8) -> GbResult<u32> {
     self.bc.hi = self.res_r(6, self.bc.hi);
-    Ok(())
+    Ok(8)
   }
 
   /// RES 6 C
   ///
   /// Reset bit 6
   ///
+  /// Cycles: 8
+  ///
   /// Flags: - - - -
-  fn res_6_c(&mut self, _instr: u8) -> GbResult<()> {
+  fn res_6_c(&mut self, _instr: u8) -> GbResult<u32> {
     self.bc.lo = self.res_r(6, self.bc.lo);
-    Ok(())
+    Ok(8)
   }
 
   /// RES 6 D
   ///
   /// Reset bit 6
   ///
+  /// Cycles: 8
+  ///
   /// Flags: - - - -
-  fn res_6_d(&mut self, _instr: u8) -> GbResult<()> {
+  fn res_6_d(&mut self, _instr: u8) -> GbResult<u32> {
     self.de.hi = self.res_r(6, self.de.hi);
-    Ok(())
+    Ok(8)
   }
 
   /// RES 6 E
   ///
   /// Reset bit 6
   ///
+  /// Cycles: 8
+  ///
   /// Flags: - - - -
-  fn res_6_e(&mut self, _instr: u8) -> GbResult<()> {
+  fn res_6_e(&mut self, _instr: u8) -> GbResult<u32> {
     self.de.lo = self.res_r(6, self.de.lo);
-    Ok(())
+    Ok(8)
   }
 
   /// RES 6 H
   ///
   /// Reset bit 6
   ///
+  /// Cycles: 8
+  ///
   /// Flags: - - - -
-  fn res_6_h(&mut self, _instr: u8) -> GbResult<()> {
+  fn res_6_h(&mut self, _instr: u8) -> GbResult<u32> {
     self.hl.hi = self.res_r(6, self.hl.hi);
-    Ok(())
+    Ok(8)
   }
 
   /// RES 6 L
   ///
   /// Reset bit 6
   ///
+  /// Cycles: 8
+  ///
   /// Flags: - - - -
-  fn res_6_l(&mut self, _instr: u8) -> GbResult<()> {
+  fn res_6_l(&mut self, _instr: u8) -> GbResult<u32> {
     self.hl.lo = self.res_r(6, self.hl.lo);
-    Ok(())
+    Ok(8)
   }
 
   /// RES 6 (HL)
   ///
   /// Reset bit 6
   ///
+  /// Cycles: 16
+  ///
   /// Flags: - - - -
-  fn res_6__hl_(&mut self, _instr: u8) -> GbResult<()> {
+  fn res_6__hl_(&mut self, _instr: u8) -> GbResult<u32> {
     let val = self.bus.lazy_dref().read8(self.hl.hilo())?;
     let val = self.res_r(6, val);
-    self.bus.lazy_dref_mut().write8(self.hl.hilo(), val)
+    self.bus.lazy_dref_mut().write8(self.hl.hilo(), val)?;
+    Ok(16)
   }
 
   /// RES 6 A
   ///
   /// Reset bit 6
   ///
+  /// Cycles: 8
+  ///
   /// Flags: - - - -
-  fn res_6_a(&mut self, _instr: u8) -> GbResult<()> {
+  fn res_6_a(&mut self, _instr: u8) -> GbResult<u32> {
     self.af.hi = self.res_r(6, self.af.hi);
-    Ok(())
+    Ok(8)
   }
 
   /// RES 7 B
   ///
   /// Reset bit 7
   ///
+  /// Cycles: 8
+  ///
   /// Flags: - - - -
-  fn res_7_b(&mut self, _instr: u8) -> GbResult<()> {
+  fn res_7_b(&mut self, _instr: u8) -> GbResult<u32> {
     self.bc.hi = self.res_r(7, self.bc.hi);
-    Ok(())
+    Ok(8)
   }
 
   /// RES 7 C
   ///
   /// Reset bit 7
   ///
+  /// Cycles: 8
+  ///
   /// Flags: - - - -
-  fn res_7_c(&mut self, _instr: u8) -> GbResult<()> {
+  fn res_7_c(&mut self, _instr: u8) -> GbResult<u32> {
     self.bc.lo = self.res_r(7, self.bc.lo);
-    Ok(())
+    Ok(8)
   }
 
   /// RES 7 D
   ///
   /// Reset bit 7
   ///
+  /// Cycles: 8
+  ///
   /// Flags: - - - -
-  fn res_7_d(&mut self, _instr: u8) -> GbResult<()> {
+  fn res_7_d(&mut self, _instr: u8) -> GbResult<u32> {
     self.de.hi = self.res_r(7, self.de.hi);
-    Ok(())
+    Ok(8)
   }
 
   /// RES 7 E
   ///
   /// Reset bit 7
   ///
+  /// Cycles: 8
+  ///
   /// Flags: - - - -
-  fn res_7_e(&mut self, _instr: u8) -> GbResult<()> {
+  fn res_7_e(&mut self, _instr: u8) -> GbResult<u32> {
     self.de.lo = self.res_r(7, self.de.lo);
-    Ok(())
+    Ok(8)
   }
 
   /// RES 7 H
   ///
   /// Reset bit 7
   ///
+  /// Cycles: 8
+  ///
   /// Flags: - - - -
-  fn res_7_h(&mut self, _instr: u8) -> GbResult<()> {
+  fn res_7_h(&mut self, _instr: u8) -> GbResult<u32> {
     self.hl.hi = self.res_r(7, self.hl.hi);
-    Ok(())
+    Ok(8)
   }
 
   /// RES 7 L
   ///
   /// Reset bit 7
   ///
+  /// Cycles: 8
+  ///
   /// Flags: - - - -
-  fn res_7_l(&mut self, _instr: u8) -> GbResult<()> {
+  fn res_7_l(&mut self, _instr: u8) -> GbResult<u32> {
     self.hl.lo = self.res_r(7, self.hl.lo);
-    Ok(())
+    Ok(8)
   }
 
   /// RES 7 (HL)
   ///
   /// Reset bit 7
   ///
+  /// Cycles: 16
+  ///
   /// Flags: - - - -
-  fn res_7__hl_(&mut self, _instr: u8) -> GbResult<()> {
+  fn res_7__hl_(&mut self, _instr: u8) -> GbResult<u32> {
     let val = self.bus.lazy_dref().read8(self.hl.hilo())?;
     let val = self.res_r(7, val);
-    self.bus.lazy_dref_mut().write8(self.hl.hilo(), val)
+    self.bus.lazy_dref_mut().write8(self.hl.hilo(), val)?;
+    Ok(16)
   }
 
   /// RES 7 A
   ///
   /// Reset bit 7
   ///
+  /// Cycles: 8
+  ///
   /// Flags: - - - -
-  fn res_7_a(&mut self, _instr: u8) -> GbResult<()> {
+  fn res_7_a(&mut self, _instr: u8) -> GbResult<u32> {
     self.af.hi = self.res_r(7, self.af.hi);
-    Ok(())
+    Ok(8)
   }
 
   /// SET 0 B
   ///
   /// Set bit 0
   ///
+  /// Cycles: 8
+  ///
   /// Flags: - - - -
-  fn set_0_b(&mut self, _instr: u8) -> GbResult<()> {
+  fn set_0_b(&mut self, _instr: u8) -> GbResult<u32> {
     self.bc.hi |= 1 << 0;
-    Ok(())
+    Ok(8)
   }
 
   /// SET 0 C
   ///
   /// Set bit 0
   ///
+  /// Cycles: 8
+  ///
   /// Flags: - - - -
-  fn set_0_c(&mut self, _instr: u8) -> GbResult<()> {
+  fn set_0_c(&mut self, _instr: u8) -> GbResult<u32> {
     self.bc.lo |= 1 << 0;
-    Ok(())
+    Ok(8)
   }
 
   /// SET 0 D
   ///
   /// Set bit 0
   ///
+  /// Cycles: 8
+  ///
   /// Flags: - - - -
-  fn set_0_d(&mut self, _instr: u8) -> GbResult<()> {
+  fn set_0_d(&mut self, _instr: u8) -> GbResult<u32> {
     self.de.hi |= 1 << 0;
-    Ok(())
+    Ok(8)
   }
 
   /// SET 0 E
   ///
   /// Set bit 0
   ///
+  /// Cycles: 8
+  ///
   /// Flags: - - - -
-  fn set_0_e(&mut self, _instr: u8) -> GbResult<()> {
+  fn set_0_e(&mut self, _instr: u8) -> GbResult<u32> {
     self.de.lo |= 1 << 0;
-    Ok(())
+    Ok(8)
   }
 
   /// SET 0 H
   ///
   /// Set bit 0
   ///
+  /// Cycles: 8
+  ///
   /// Flags: - - - -
-  fn set_0_h(&mut self, _instr: u8) -> GbResult<()> {
+  fn set_0_h(&mut self, _instr: u8) -> GbResult<u32> {
     self.hl.hi |= 1 << 0;
-    Ok(())
+    Ok(8)
   }
 
   /// SET 0 L
   ///
   /// Set bit 0
   ///
+  /// Cycles: 8
+  ///
   /// Flags: - - - -
-  fn set_0_l(&mut self, _instr: u8) -> GbResult<()> {
+  fn set_0_l(&mut self, _instr: u8) -> GbResult<u32> {
     self.hl.lo |= 1 << 0;
-    Ok(())
+    Ok(8)
   }
 
   /// SET 0 (HL)
   ///
   /// Set bit 0
   ///
+  /// Cycles: 16
+  ///
   /// Flags: - - - -
-  fn set_0__hl_(&mut self, _instr: u8) -> GbResult<()> {
+  fn set_0__hl_(&mut self, _instr: u8) -> GbResult<u32> {
     let val = self.bus.lazy_dref().read8(self.hl.hilo())? | (1 << 0);
-    self.bus.lazy_dref_mut().write8(self.hl.hilo(), val)
+    self.bus.lazy_dref_mut().write8(self.hl.hilo(), val)?;
+    Ok(16)
   }
 
   /// SET 0 A
   ///
   /// Set bit 0
   ///
+  /// Cycles: 8
+  ///
   /// Flags: - - - -
-  fn set_0_a(&mut self, _instr: u8) -> GbResult<()> {
+  fn set_0_a(&mut self, _instr: u8) -> GbResult<u32> {
     self.af.hi |= 1 << 0;
-    Ok(())
+    Ok(8)
   }
 
   /// SET 1 B
   ///
   /// Set bit 1
   ///
+  /// Cycles: 8
+  ///
   /// Flags: - - - -
-  fn set_1_b(&mut self, _instr: u8) -> GbResult<()> {
+  fn set_1_b(&mut self, _instr: u8) -> GbResult<u32> {
     self.bc.hi |= 1 << 1;
-    Ok(())
+    Ok(8)
   }
 
   /// SET 1 C
   ///
   /// Set bit 1
   ///
+  /// Cycles: 8
+  ///
   /// Flags: - - - -
-  fn set_1_c(&mut self, _instr: u8) -> GbResult<()> {
+  fn set_1_c(&mut self, _instr: u8) -> GbResult<u32> {
     self.bc.lo |= 1 << 1;
-    Ok(())
+    Ok(8)
   }
 
   /// SET 1 D
   ///
   /// Set bit 1
   ///
+  /// Cycles: 8
+  ///
   /// Flags: - - - -
-  fn set_1_d(&mut self, _instr: u8) -> GbResult<()> {
+  fn set_1_d(&mut self, _instr: u8) -> GbResult<u32> {
     self.de.hi |= 1 << 1;
-    Ok(())
+    Ok(8)
   }
 
   /// SET 1 E
   ///
   /// Set bit 1
   ///
+  /// Cycles: 8
+  ///
   /// Flags: - - - -
-  fn set_1_e(&mut self, _instr: u8) -> GbResult<()> {
+  fn set_1_e(&mut self, _instr: u8) -> GbResult<u32> {
     self.de.lo |= 1 << 1;
-    Ok(())
+    Ok(8)
   }
 
   /// SET 1 H
   ///
   /// Set bit 1
   ///
+  /// Cycles: 8
+  ///
   /// Flags: - - - -
-  fn set_1_h(&mut self, _instr: u8) -> GbResult<()> {
+  fn set_1_h(&mut self, _instr: u8) -> GbResult<u32> {
     self.hl.hi |= 1 << 1;
-    Ok(())
+    Ok(8)
   }
 
   /// SET 1 L
   ///
   /// Set bit 1
   ///
+  /// Cycles: 8
+  ///
   /// Flags: - - - -
-  fn set_1_l(&mut self, _instr: u8) -> GbResult<()> {
+  fn set_1_l(&mut self, _instr: u8) -> GbResult<u32> {
     self.hl.lo |= 1 << 1;
-    Ok(())
+    Ok(8)
   }
 
   /// SET 1 (HL)
   ///
   /// Set bit 1
   ///
+  /// Cycles: 16
+  ///
   /// Flags: - - - -
-  fn set_1__hl_(&mut self, _instr: u8) -> GbResult<()> {
+  fn set_1__hl_(&mut self, _instr: u8) -> GbResult<u32> {
     let val = self.bus.lazy_dref().read8(self.hl.hilo())? | (1 << 1);
-    self.bus.lazy_dref_mut().write8(self.hl.hilo(), val)
+    self.bus.lazy_dref_mut().write8(self.hl.hilo(), val)?;
+    Ok(16)
   }
 
   /// SET 1 A
   ///
   /// Set bit 1
   ///
+  /// Cycles: 8
+  ///
   /// Flags: - - - -
-  fn set_1_a(&mut self, _instr: u8) -> GbResult<()> {
+  fn set_1_a(&mut self, _instr: u8) -> GbResult<u32> {
     self.af.hi |= 1 << 1;
-    Ok(())
+    Ok(8)
   }
 
   /// SET 2 B
   ///
   /// Set bit 2
   ///
+  /// Cycles: 8
+  ///
   /// Flags: - - - -
-  fn set_2_b(&mut self, _instr: u8) -> GbResult<()> {
+  fn set_2_b(&mut self, _instr: u8) -> GbResult<u32> {
     self.bc.hi |= 1 << 2;
-    Ok(())
+    Ok(8)
   }
 
   /// SET 2 C
   ///
   /// Set bit 2
   ///
+  /// Cycles: 8
+  ///
   /// Flags: - - - -
-  fn set_2_c(&mut self, _instr: u8) -> GbResult<()> {
+  fn set_2_c(&mut self, _instr: u8) -> GbResult<u32> {
     self.bc.lo |= 1 << 2;
-    Ok(())
+    Ok(8)
   }
 
   /// SET 2 D
   ///
   /// Set bit 2
   ///
+  /// Cycles: 8
+  ///
   /// Flags: - - - -
-  fn set_2_d(&mut self, _instr: u8) -> GbResult<()> {
+  fn set_2_d(&mut self, _instr: u8) -> GbResult<u32> {
     self.de.hi |= 1 << 2;
-    Ok(())
+    Ok(8)
   }
 
   /// SET 2 E
   ///
   /// Set bit 2
   ///
+  /// Cycles: 8
+  ///
   /// Flags: - - - -
-  fn set_2_e(&mut self, _instr: u8) -> GbResult<()> {
+  fn set_2_e(&mut self, _instr: u8) -> GbResult<u32> {
     self.de.lo |= 1 << 2;
-    Ok(())
+    Ok(8)
   }
 
   /// SET 2 H
   ///
   /// Set bit 2
   ///
+  /// Cycles: 8
+  ///
   /// Flags: - - - -
-  fn set_2_h(&mut self, _instr: u8) -> GbResult<()> {
+  fn set_2_h(&mut self, _instr: u8) -> GbResult<u32> {
     self.hl.hi |= 1 << 2;
-    Ok(())
+    Ok(8)
   }
 
   /// SET 2 L
   ///
   /// Set bit 2
   ///
+  /// Cycles: 8
+  ///
   /// Flags: - - - -
-  fn set_2_l(&mut self, _instr: u8) -> GbResult<()> {
+  fn set_2_l(&mut self, _instr: u8) -> GbResult<u32> {
     self.hl.lo |= 1 << 2;
-    Ok(())
+    Ok(8)
   }
 
   /// SET 2 (HL)
   ///
   /// Set bit 2
   ///
+  /// Cycles: 16
+  ///
   /// Flags: - - - -
-  fn set_2__hl_(&mut self, _instr: u8) -> GbResult<()> {
+  fn set_2__hl_(&mut self, _instr: u8) -> GbResult<u32> {
     let val = self.bus.lazy_dref().read8(self.hl.hilo())? | (1 << 2);
-    self.bus.lazy_dref_mut().write8(self.hl.hilo(), val)
+    self.bus.lazy_dref_mut().write8(self.hl.hilo(), val)?;
+    Ok(16)
   }
 
   /// SET 2 A
   ///
   /// Set bit 2
   ///
+  /// Cycles: 8
+  ///
   /// Flags: - - - -
-  fn set_2_a(&mut self, _instr: u8) -> GbResult<()> {
+  fn set_2_a(&mut self, _instr: u8) -> GbResult<u32> {
     self.af.hi |= 1 << 2;
-    Ok(())
+    Ok(8)
   }
 
   /// SET 3 B
   ///
   /// Set bit 3
   ///
+  /// Cycles: 8
+  ///
   /// Flags: - - - -
-  fn set_3_b(&mut self, _instr: u8) -> GbResult<()> {
+  fn set_3_b(&mut self, _instr: u8) -> GbResult<u32> {
     self.bc.hi |= 1 << 3;
-    Ok(())
+    Ok(8)
   }
 
   /// SET 3 C
   ///
   /// Set bit 3
   ///
+  /// Cycles: 8
+  ///
   /// Flags: - - - -
-  fn set_3_c(&mut self, _instr: u8) -> GbResult<()> {
+  fn set_3_c(&mut self, _instr: u8) -> GbResult<u32> {
     self.bc.lo |= 1 << 3;
-    Ok(())
+    Ok(8)
   }
 
   /// SET 3 D
   ///
   /// Set bit 3
   ///
+  /// Cycles: 8
+  ///
   /// Flags: - - - -
-  fn set_3_d(&mut self, _instr: u8) -> GbResult<()> {
+  fn set_3_d(&mut self, _instr: u8) -> GbResult<u32> {
     self.de.hi |= 1 << 3;
-    Ok(())
+    Ok(8)
   }
 
   /// SET 3 E
   ///
   /// Set bit 3
   ///
+  /// Cycles: 8
+  ///
   /// Flags: - - - -
-  fn set_3_e(&mut self, _instr: u8) -> GbResult<()> {
+  fn set_3_e(&mut self, _instr: u8) -> GbResult<u32> {
     self.de.lo |= 1 << 3;
-    Ok(())
+    Ok(8)
   }
 
   /// SET 3 H
   ///
   /// Set bit 3
   ///
+  /// Cycles: 8
+  ///
   /// Flags: - - - -
-  fn set_3_h(&mut self, _instr: u8) -> GbResult<()> {
+  fn set_3_h(&mut self, _instr: u8) -> GbResult<u32> {
     self.hl.hi |= 1 << 3;
-    Ok(())
+    Ok(8)
   }
 
   /// SET 3 L
   ///
   /// Set bit 3
   ///
+  /// Cycles: 8
+  ///
   /// Flags: - - - -
-  fn set_3_l(&mut self, _instr: u8) -> GbResult<()> {
+  fn set_3_l(&mut self, _instr: u8) -> GbResult<u32> {
     self.hl.lo |= 1 << 3;
-    Ok(())
+    Ok(8)
   }
 
   /// SET 3 (HL)
   ///
   /// Set bit 3
   ///
+  /// Cycles: 16
+  ///
   /// Flags: - - - -
-  fn set_3__hl_(&mut self, _instr: u8) -> GbResult<()> {
+  fn set_3__hl_(&mut self, _instr: u8) -> GbResult<u32> {
     let val = self.bus.lazy_dref().read8(self.hl.hilo())? | (1 << 3);
-    self.bus.lazy_dref_mut().write8(self.hl.hilo(), val)
+    self.bus.lazy_dref_mut().write8(self.hl.hilo(), val)?;
+    Ok(16)
   }
 
   /// SET 3 A
   ///
   /// Set bit 3
   ///
+  /// Cycles: 8
+  ///
   /// Flags: - - - -
-  fn set_3_a(&mut self, _instr: u8) -> GbResult<()> {
+  fn set_3_a(&mut self, _instr: u8) -> GbResult<u32> {
     self.af.hi |= 1 << 3;
-    Ok(())
+    Ok(8)
   }
 
   /// SET 4 B
   ///
   /// Set bit 4
   ///
+  /// Cycles: 8
+  ///
   /// Flags: - - - -
-  fn set_4_b(&mut self, _instr: u8) -> GbResult<()> {
+  fn set_4_b(&mut self, _instr: u8) -> GbResult<u32> {
     self.bc.hi |= 1 << 4;
-    Ok(())
+    Ok(8)
   }
 
   /// SET 4 C
   ///
   /// Set bit 4
   ///
+  /// Cycles: 8
+  ///
   /// Flags: - - - -
-  fn set_4_c(&mut self, _instr: u8) -> GbResult<()> {
+  fn set_4_c(&mut self, _instr: u8) -> GbResult<u32> {
     self.bc.lo |= 1 << 4;
-    Ok(())
+    Ok(8)
   }
 
   /// SET 4 D
   ///
   /// Set bit 4
   ///
+  /// Cycles: 8
+  ///
   /// Flags: - - - -
-  fn set_4_d(&mut self, _instr: u8) -> GbResult<()> {
+  fn set_4_d(&mut self, _instr: u8) -> GbResult<u32> {
     self.de.hi |= 1 << 4;
-    Ok(())
+    Ok(8)
   }
 
   /// SET 4 E
   ///
   /// Set bit 4
   ///
+  /// Cycles: 8
+  ///
   /// Flags: - - - -
-  fn set_4_e(&mut self, _instr: u8) -> GbResult<()> {
+  fn set_4_e(&mut self, _instr: u8) -> GbResult<u32> {
     self.de.lo |= 1 << 4;
-    Ok(())
+    Ok(8)
   }
 
   /// SET 4 H
   ///
   /// Set bit 4
   ///
+  /// Cycles: 8
+  ///
   /// Flags: - - - -
-  fn set_4_h(&mut self, _instr: u8) -> GbResult<()> {
+  fn set_4_h(&mut self, _instr: u8) -> GbResult<u32> {
     self.hl.hi |= 1 << 4;
-    Ok(())
+    Ok(8)
   }
 
   /// SET 4 L
   ///
   /// Set bit 4
   ///
+  /// Cycles: 8
+  ///
   /// Flags: - - - -
-  fn set_4_l(&mut self, _instr: u8) -> GbResult<()> {
+  fn set_4_l(&mut self, _instr: u8) -> GbResult<u32> {
     self.hl.lo |= 1 << 4;
-    Ok(())
+    Ok(8)
   }
 
   /// SET 4 (HL)
   ///
   /// Set bit 4
   ///
+  /// Cycles: 16
+  ///
   /// Flags: - - - -
-  fn set_4__hl_(&mut self, _instr: u8) -> GbResult<()> {
+  fn set_4__hl_(&mut self, _instr: u8) -> GbResult<u32> {
     let val = self.bus.lazy_dref().read8(self.hl.hilo())? | (1 << 4);
-    self.bus.lazy_dref_mut().write8(self.hl.hilo(), val)
+    self.bus.lazy_dref_mut().write8(self.hl.hilo(), val)?;
+    Ok(16)
   }
 
   /// SET 4 A
   ///
   /// Set bit 4
   ///
+  /// Cycles: 8
+  ///
   /// Flags: - - - -
-  fn set_4_a(&mut self, _instr: u8) -> GbResult<()> {
+  fn set_4_a(&mut self, _instr: u8) -> GbResult<u32> {
     self.af.hi |= 1 << 4;
-    Ok(())
+    Ok(8)
   }
 
   /// SET 5 B
   ///
   /// Set bit 5
   ///
+  /// Cycles: 8
+  ///
   /// Flags: - - - -
-  fn set_5_b(&mut self, _instr: u8) -> GbResult<()> {
+  fn set_5_b(&mut self, _instr: u8) -> GbResult<u32> {
     self.bc.hi |= 1 << 5;
-    Ok(())
+    Ok(8)
   }
 
   /// SET 5 C
   ///
   /// Set bit 5
   ///
+  /// Cycles: 8
+  ///
   /// Flags: - - - -
-  fn set_5_c(&mut self, _instr: u8) -> GbResult<()> {
+  fn set_5_c(&mut self, _instr: u8) -> GbResult<u32> {
     self.bc.lo |= 1 << 5;
-    Ok(())
+    Ok(8)
   }
 
   /// SET 5 D
   ///
   /// Set bit 5
   ///
+  /// Cycles: 8
+  ///
   /// Flags: - - - -
-  fn set_5_d(&mut self, _instr: u8) -> GbResult<()> {
+  fn set_5_d(&mut self, _instr: u8) -> GbResult<u32> {
     self.de.hi |= 1 << 5;
-    Ok(())
+    Ok(8)
   }
 
   /// SET 5 E
   ///
   /// Set bit 5
   ///
+  /// Cycles: 8
+  ///
   /// Flags: - - - -
-  fn set_5_e(&mut self, _instr: u8) -> GbResult<()> {
+  fn set_5_e(&mut self, _instr: u8) -> GbResult<u32> {
     self.de.lo |= 1 << 5;
-    Ok(())
+    Ok(8)
   }
 
   /// SET 5 H
   ///
   /// Set bit 5
   ///
+  /// Cycles: 8
+  ///
   /// Flags: - - - -
-  fn set_5_h(&mut self, _instr: u8) -> GbResult<()> {
+  fn set_5_h(&mut self, _instr: u8) -> GbResult<u32> {
     self.hl.hi |= 1 << 5;
-    Ok(())
+    Ok(8)
   }
 
   /// SET 5 L
   ///
   /// Set bit 5
   ///
+  /// Cycles: 8
+  ///
   /// Flags: - - - -
-  fn set_5_l(&mut self, _instr: u8) -> GbResult<()> {
+  fn set_5_l(&mut self, _instr: u8) -> GbResult<u32> {
     self.hl.lo |= 1 << 5;
-    Ok(())
+    Ok(8)
   }
 
   /// SET 5 (HL)
   ///
   /// Set bit 5
   ///
+  /// Cycles: 16
+  ///
   /// Flags: - - - -
-  fn set_5__hl_(&mut self, _instr: u8) -> GbResult<()> {
+  fn set_5__hl_(&mut self, _instr: u8) -> GbResult<u32> {
     let val = self.bus.lazy_dref().read8(self.hl.hilo())? | (1 << 5);
-    self.bus.lazy_dref_mut().write8(self.hl.hilo(), val)
+    self.bus.lazy_dref_mut().write8(self.hl.hilo(), val)?;
+    Ok(16)
   }
 
   /// SET 5 A
   ///
   /// Set bit 5
   ///
+  /// Cycles: 8
+  ///
   /// Flags: - - - -
-  fn set_5_a(&mut self, _instr: u8) -> GbResult<()> {
+  fn set_5_a(&mut self, _instr: u8) -> GbResult<u32> {
     self.af.hi |= 1 << 5;
-    Ok(())
+    Ok(8)
   }
 
   /// SET 6 B
   ///
   /// Set bit 6
   ///
+  /// Cycles: 8
+  ///
   /// Flags: - - - -
-  fn set_6_b(&mut self, _instr: u8) -> GbResult<()> {
+  fn set_6_b(&mut self, _instr: u8) -> GbResult<u32> {
     self.bc.hi |= 1 << 6;
-    Ok(())
+    Ok(8)
   }
 
   /// SET 6 C
   ///
   /// Set bit 6
   ///
+  /// Cycles: 8
+  ///
   /// Flags: - - - -
-  fn set_6_c(&mut self, _instr: u8) -> GbResult<()> {
+  fn set_6_c(&mut self, _instr: u8) -> GbResult<u32> {
     self.bc.lo |= 1 << 6;
-    Ok(())
+    Ok(8)
   }
 
   /// SET 6 D
   ///
   /// Set bit 6
   ///
+  /// Cycles: 8
+  ///
   /// Flags: - - - -
-  fn set_6_d(&mut self, _instr: u8) -> GbResult<()> {
+  fn set_6_d(&mut self, _instr: u8) -> GbResult<u32> {
     self.de.hi |= 1 << 6;
-    Ok(())
+    Ok(8)
   }
 
   /// SET 6 E
   ///
   /// Set bit 6
   ///
+  /// Cycles: 8
+  ///
   /// Flags: - - - -
-  fn set_6_e(&mut self, _instr: u8) -> GbResult<()> {
+  fn set_6_e(&mut self, _instr: u8) -> GbResult<u32> {
     self.de.lo |= 1 << 6;
-    Ok(())
+    Ok(8)
   }
 
   /// SET 6 H
   ///
   /// Set bit 6
   ///
+  /// Cycles: 8
+  ///
   /// Flags: - - - -
-  fn set_6_h(&mut self, _instr: u8) -> GbResult<()> {
+  fn set_6_h(&mut self, _instr: u8) -> GbResult<u32> {
     self.hl.hi |= 1 << 6;
-    Ok(())
+    Ok(8)
   }
 
   /// SET 6 L
   ///
   /// Set bit 6
   ///
+  /// Cycles: 8
+  ///
   /// Flags: - - - -
-  fn set_6_l(&mut self, _instr: u8) -> GbResult<()> {
+  fn set_6_l(&mut self, _instr: u8) -> GbResult<u32> {
     self.hl.lo |= 1 << 6;
-    Ok(())
+    Ok(8)
   }
 
   /// SET 6 (HL)
   ///
   /// Set bit 6
   ///
+  /// Cycles: 16
+  ///
   /// Flags: - - - -
-  fn set_6__hl_(&mut self, _instr: u8) -> GbResult<()> {
+  fn set_6__hl_(&mut self, _instr: u8) -> GbResult<u32> {
     let val = self.bus.lazy_dref().read8(self.hl.hilo())? | (1 << 6);
-    self.bus.lazy_dref_mut().write8(self.hl.hilo(), val)
+    self.bus.lazy_dref_mut().write8(self.hl.hilo(), val)?;
+    Ok(16)
   }
 
   /// SET 6 A
   ///
   /// Set bit 6
   ///
+  /// Cycles: 8
+  ///
   /// Flags: - - - -
-  fn set_6_a(&mut self, _instr: u8) -> GbResult<()> {
+  fn set_6_a(&mut self, _instr: u8) -> GbResult<u32> {
     self.af.hi |= 1 << 6;
-    Ok(())
+    Ok(8)
   }
 
   /// SET 7 B
   ///
   /// Set bit 7
   ///
+  /// Cycles: 8
+  ///
   /// Flags: - - - -
-  fn set_7_b(&mut self, _instr: u8) -> GbResult<()> {
+  fn set_7_b(&mut self, _instr: u8) -> GbResult<u32> {
     self.bc.hi |= 1 << 7;
-    Ok(())
+    Ok(8)
   }
 
   /// SET 7 C
   ///
   /// Set bit 7
   ///
+  /// Cycles: 8
+  ///
   /// Flags: - - - -
-  fn set_7_c(&mut self, _instr: u8) -> GbResult<()> {
+  fn set_7_c(&mut self, _instr: u8) -> GbResult<u32> {
     self.bc.lo |= 1 << 7;
-    Ok(())
+    Ok(8)
   }
 
   /// SET 7 D
   ///
   /// Set bit 7
   ///
+  /// Cycles: 8
+  ///
   /// Flags: - - - -
-  fn set_7_d(&mut self, _instr: u8) -> GbResult<()> {
+  fn set_7_d(&mut self, _instr: u8) -> GbResult<u32> {
     self.de.hi |= 1 << 7;
-    Ok(())
+    Ok(8)
   }
 
   /// SET 7 E
   ///
   /// Set bit 7
   ///
+  /// Cycles: 8
+  ///
   /// Flags: - - - -
-  fn set_7_e(&mut self, _instr: u8) -> GbResult<()> {
+  fn set_7_e(&mut self, _instr: u8) -> GbResult<u32> {
     self.de.lo |= 1 << 7;
-    Ok(())
+    Ok(8)
   }
 
   /// SET 7 H
   ///
   /// Set bit 7
   ///
+  /// Cycles: 8
+  ///
   /// Flags: - - - -
-  fn set_7_h(&mut self, _instr: u8) -> GbResult<()> {
+  fn set_7_h(&mut self, _instr: u8) -> GbResult<u32> {
     self.hl.hi |= 1 << 7;
-    Ok(())
+    Ok(8)
   }
 
   /// SET 7 L
   ///
   /// Set bit 7
   ///
+  /// Cycles: 8
+  ///
   /// Flags: - - - -
-  fn set_7_l(&mut self, _instr: u8) -> GbResult<()> {
+  fn set_7_l(&mut self, _instr: u8) -> GbResult<u32> {
     self.hl.lo |= 1 << 7;
-    Ok(())
+    Ok(8)
   }
 
   /// SET 7 (HL)
   ///
   /// Set bit 7
   ///
+  /// Cycles: 16
+  ///
   /// Flags: - - - -
-  fn set_7__hl_(&mut self, _instr: u8) -> GbResult<()> {
+  fn set_7__hl_(&mut self, _instr: u8) -> GbResult<u32> {
     let val = self.bus.lazy_dref().read8(self.hl.hilo())? | (1 << 7);
-    self.bus.lazy_dref_mut().write8(self.hl.hilo(), val)
+    self.bus.lazy_dref_mut().write8(self.hl.hilo(), val)?;
+    Ok(16)
   }
 
   /// SET 7 A
   ///
   /// Set bit 7
   ///
+  /// Cycles: 8
+  ///
   /// Flags: - - - -
-  fn set_7_a(&mut self, _instr: u8) -> GbResult<()> {
+  fn set_7_a(&mut self, _instr: u8) -> GbResult<u32> {
     self.af.hi |= 1 << 7;
-    Ok(())
+    Ok(8)
   }
 }
