@@ -82,6 +82,7 @@ impl GbState {
 
     // connect modules to interrupt controller
     self.timer.borrow_mut().connect_ic(self.ic.clone())?;
+    self.ppu.borrow_mut().connect_ic(self.ic.clone())?;
 
     Ok(())
   }

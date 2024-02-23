@@ -1,6 +1,7 @@
 //! PPU for the Gameboy emulator.
 
 use crate::err::{GbError, GbErrorType, GbResult};
+use crate::int::{Interrupt, Interrupts};
 use crate::screen::{Pos, Screen};
 use crate::util::LazyDref;
 use crate::{bus, gb_err, screen};
@@ -47,52 +48,7 @@ const PALETTE_GREEN: [screen::Color; 4] = [
   screen::Color::new(15.0 / 255.0, 56.0 / 255.0, 15.0 / 255.0),   // black
 ];
 
-// LCD Control register
-/// bit 0: 0 = Off; 1 = On
-const LCDC_BG_WIN_ENABLE: u8 = 0;
-/// bit 1: 0 = Off; 1 = On
-const LCDC_OBJ_ENABLED: u8 = 1;
-/// bit 2: 0 = 8×8; 1 = 8×16
-const LCDC_OBJ_SIZE_LARGE: u8 = 2;
-/// bit 3: 0 = 9800–9BFF; 1 = 9C00–9FFF
-const LCDC_TILE_MAP_HI: u8 = 3;
-/// bit 4: 0 = 8800–97FF; 1 = 8000–8FFF
-const LCDC_WIN_BG_DATA_MAP_LO: u8 = 4;
-/// bit 5: 0 = Off; 1 = On
-const LCDC_WIN_ENABLED: u8 = 5;
-/// bit 6: 0 = 9800–9BFF; 1 = 9C00–9FFF
-const LCDC_WIN_TILE_MAP_HI: u8 = 6;
-/// bit 7: 0 = Off; 1 = On
-const LCDC_PPU_ENABLED: u8 = 7;
-
-// LCD Status Register
-#[rustfmt::skip]
-/// Bit 0-1: PPU mode (Read-only)
-///
-/// Mode | Action                                     | Duration                             | Accessible video memory
-/// -----|--------------------------------------------|--------------------------------------|-------------------------
-///   2  | Searching for OBJs which overlap this line | 80 dots                              | VRAM, CGB palettes
-///   3  | Sending pixels to the LCD                  | Between 172 and 289 dots, see below  | None
-///   0  | Waiting until the end of the scanline      | 376 - mode 3's duration              | VRAM, OAM, CGB palettes
-///   1  | Waiting until the next frame               | 4560 dots (10 scanlines)             | VRAM, OAM, CGB palettes
-const STAT_PPU_MODE: Range<usize> = 0..2;
-/// Bit 2: LYC == LY (Read-only): Set when LY contains the same value as LYC;
-/// it is constantly updated
-const STAT_LYC_EQ_LY: u8 = 2;
-/// Bit 3: Mode 0 int select (Read/Write): If set, selects the Mode 0
-/// condition
-const STAT_MODE0_INT_SELECT: u8 = 3;
-/// Bit 4: Mode 1 int select (Read/Write): If set, selects the Mode 1
-/// condition
-const STAT_MODE1_INT_SELECT: u8 = 4;
-/// Bit 5: Mode 2 int select (Read/Write): If set, selects the Mode 2
-/// condition
-const STAT_MODE2_INT_SELECT: u8 = 5;
-/// Bit 6: LYC int select (Read/Write): If set, selects the LYC == LY
-/// condition
-const STAT_LYC_INT_SELECT: u8 = 6;
-
-#[derive(PartialEq)]
+#[derive(PartialEq, Copy, Clone)]
 enum PpuMode {
   HBlank = 0,
   VBlank = 1,
@@ -100,16 +56,134 @@ enum PpuMode {
   Rendering = 3,
 }
 
+impl From<u8> for PpuMode {
+  fn from(value: u8) -> Self {
+    match value {
+      mode if mode == PpuMode::Rendering as u8 => PpuMode::Rendering,
+      mode if mode == PpuMode::VBlank as u8 => PpuMode::VBlank,
+      mode if mode == PpuMode::HBlank as u8 => PpuMode::HBlank,
+      mode if mode == PpuMode::OamScan as u8 => PpuMode::OamScan,
+      // shouldn't be possible
+      _ => panic!("Unknown Ppu Mode!"),
+    }
+  }
+}
+
+#[derive(Copy, Clone)]
+struct LcdControl {
+  /// bit 0: 0 = Off; 1 = On
+  pub bg_win_enable: bool,
+  /// bit 1: 0 = Off; 1 = On
+  pub obj_enabled: bool,
+  /// bit 2: 0 = 8×8; 1 = 8×16
+  pub obj_size_large: bool,
+  /// bit 3: 0 = 9800–9BFF; 1 = 9C00–9FFF
+  pub tile_map_hi: bool,
+  /// bit 4: 0 = 8800–97FF; 1 = 8000–8FFF
+  pub win_bg_data_map_lo: bool,
+  /// bit 5: 0 = Off; 1 = On
+  pub win_enabled: bool,
+  /// bit 6: 0 = 9800–9BFF; 1 = 9C00–9FFF
+  pub win_tile_map_hi: bool,
+  /// bit 7: 0 = Off; 1 = On
+  pub ppu_enabled: bool,
+}
+
+impl From<u8> for LcdControl {
+  fn from(value: u8) -> Self {
+    Self {
+      bg_win_enable: value.get_bit(0),
+      obj_enabled: value.get_bit(1),
+      obj_size_large: value.get_bit(2),
+      tile_map_hi: value.get_bit(3),
+      win_bg_data_map_lo: value.get_bit(4),
+      win_enabled: value.get_bit(5),
+      win_tile_map_hi: value.get_bit(6),
+      ppu_enabled: value.get_bit(7),
+    }
+  }
+}
+
+impl From<LcdControl> for u8 {
+  fn from(value: LcdControl) -> Self {
+    let mut val_u8 = 0;
+    val_u8.set_bit(0, value.bg_win_enable);
+    val_u8.set_bit(1, value.obj_enabled);
+    val_u8.set_bit(2, value.obj_size_large);
+    val_u8.set_bit(3, value.tile_map_hi);
+    val_u8.set_bit(4, value.win_bg_data_map_lo);
+    val_u8.set_bit(5, value.win_enabled);
+    val_u8.set_bit(6, value.win_tile_map_hi);
+    val_u8.set_bit(7, value.ppu_enabled);
+    val_u8
+  }
+}
+
+#[derive(Copy, Clone)]
+struct Status {
+  #[rustfmt::skip]
+  /// Bit 0-1: PPU mode (Read-only)
+  ///
+  /// Mode | Action                                     | Duration                             | Accessible video memory
+  /// -----|--------------------------------------------|--------------------------------------|-------------------------
+  ///   2  | Searching for OBJs which overlap this line | 80 dots                              | VRAM, CGB palettes
+  ///   3  | Sending pixels to the LCD                  | Between 172 and 289 dots, see below  | None
+  ///   0  | Waiting until the end of the scanline      | 376 - mode 3's duration              | VRAM, OAM, CGB palettes
+  ///   1  | Waiting until the next frame               | 4560 dots (10 scanlines)             | VRAM, OAM, CGB palettes
+  pub ppu_mode: PpuMode,
+  /// Bit 2: LYC == LY (Read-only): Set when LY contains the same value as LYC;
+  /// it is constantly updated
+  pub lyc_eq_ly: bool,
+  /// Bit 3: Mode 0 int select (Read/Write): If set, selects the Mode 0
+  /// condition
+  pub mode0_int_select: bool,
+  /// Bit 4: Mode 1 int select (Read/Write): If set, selects the Mode 1
+  /// condition
+  pub mode1_int_select: bool,
+  /// Bit 5: Mode 2 int select (Read/Write): If set, selects the Mode 2
+  /// condition
+  pub mode2_int_select: bool,
+  /// Bit 6: LYC int select (Read/Write): If set, selects the LYC == LY
+  /// condition
+  pub lyc_int_select: bool,
+}
+
+impl From<u8> for Status {
+  fn from(value: u8) -> Self {
+    Self {
+      ppu_mode: value.get_bits(0..2).into(),
+      lyc_eq_ly: value.get_bit(2),
+      mode0_int_select: value.get_bit(3),
+      mode1_int_select: value.get_bit(4),
+      mode2_int_select: value.get_bit(5),
+      lyc_int_select: value.get_bit(6),
+    }
+  }
+}
+
+impl From<Status> for u8 {
+  fn from(value: Status) -> Self {
+    let mut val_u8 = 0;
+    val_u8.set_bits(0..2, value.ppu_mode as u8);
+    val_u8.set_bit(2, value.lyc_eq_ly);
+    val_u8.set_bit(3, value.mode0_int_select);
+    val_u8.set_bit(4, value.mode1_int_select);
+    val_u8.set_bit(5, value.mode2_int_select);
+    val_u8.set_bit(6, value.lyc_int_select);
+    val_u8
+  }
+}
+
 pub struct Ppu {
   pub vram: Vec<u8>,
   /// lcd control register
-  pub lcdc: u8,
+  pub lcdc: LcdControl,
   /// LCD y coord ranged from 0-153 (read-only)
   pub ly: u8,
   /// LCD Y value to compare against
   pub lyc: u8,
   /// LCD Status register
-  pub stat: u8,
+  pub stat: Status,
   /// Background palette index mapping
   pub bgp: u8,
   /// Scroll X
@@ -126,6 +200,8 @@ pub struct Ppu {
 
   // Screen to draw to
   screen: Option<Rc<RefCell<Screen>>>,
+  // interrupt controller handle
+  ic: Option<Rc<RefCell<Interrupts>>>,
 
   // current screen position we are drawing
   pos: screen::Pos,
@@ -134,12 +210,12 @@ pub struct Ppu {
 impl Ppu {
   pub fn new() -> Ppu {
     // start in rendering mode
-    let mut stat = 0;
-    stat.set_bits(STAT_PPU_MODE, PpuMode::Rendering as u8);
+    let mut stat: Status = 0.into();
+    stat.ppu_mode = PpuMode::Rendering;
 
     Ppu {
       vram: vec![0; VRAM_SIZE],
-      lcdc: 0,
+      lcdc: 0.into(),
       stat,
       ly: 0,
       lyc: 0,
@@ -150,6 +226,7 @@ impl Ppu {
       vblank_left: 0,
       hblank_left: 0,
       screen: None,
+      ic: None,
       pos: Pos { x: 0, y: 0 },
     }
   }
@@ -157,6 +234,15 @@ impl Ppu {
   pub fn connect_screen(&mut self, screen: Rc<RefCell<Screen>>) -> GbResult<()> {
     match self.screen {
       None => self.screen = Some(screen),
+      Some(_) => return gb_err!(GbErrorType::AlreadyInitialized),
+    }
+    Ok(())
+  }
+
+  /// Adds a reference to the interrupt controller to the ppu
+  pub fn connect_ic(&mut self, ic: Rc<RefCell<Interrupts>>) -> GbResult<()> {
+    match self.ic {
+      None => self.ic = Some(ic),
       Some(_) => return gb_err!(GbErrorType::AlreadyInitialized),
     }
     Ok(())
@@ -171,7 +257,7 @@ impl Ppu {
 
   fn step_one(&mut self) -> GbResult<()> {
     // only draw when we need to
-    if self.ppu_mode() == PpuMode::Rendering {
+    if self.stat.ppu_mode == PpuMode::Rendering {
       // our pixel coordinate needs to be adjusted for scrolling
       let pos = self.pos_with_scroll();
       trace!("Adjusted Pos: {:?}", pos);
@@ -213,8 +299,8 @@ impl Ppu {
 
   pub fn io_read(&self, addr: u16) -> GbResult<u8> {
     match addr {
-      LCDC_ADDR => Ok(self.lcdc),
-      STAT_ADDR => Ok(self.stat),
+      LCDC_ADDR => Ok(self.lcdc.into()),
+      STAT_ADDR => Ok(self.stat.into()),
       LY_ADDR => Ok(self.ly),
       LYC_ADDR => Ok(self.lyc),
       BGP_ADDR => Ok(self.bgp),
@@ -229,8 +315,8 @@ impl Ppu {
 
   pub fn io_write(&mut self, addr: u16, data: u8) -> GbResult<()> {
     match addr {
-      LCDC_ADDR => self.lcdc = data,
-      STAT_ADDR => self.stat = data,
+      LCDC_ADDR => self.lcdc = data.into(),
+      STAT_ADDR => self.stat = data.into(),
       LYC_ADDR => self.lyc = data,
       BGP_ADDR => self.bgp = data,
       SCY_ADDR => self.scy = data,
@@ -295,45 +381,39 @@ impl Ppu {
     self.pos.x += 1;
 
     if self.pos.x == HBLANK_START {
-      if self.ppu_mode() != PpuMode::VBlank {
-        self.set_ppu_mode(PpuMode::HBlank);
+      if self.stat.ppu_mode != PpuMode::VBlank {
+        self.stat.ppu_mode = PpuMode::HBlank;
       }
     }
     if self.pos.x == HBLANK_END {
       // reset x position and start rendering again if not in vblank
       self.pos.x = 0;
-      if self.ppu_mode() != PpuMode::VBlank {
-        self.set_ppu_mode(PpuMode::Rendering);
+      if self.stat.ppu_mode != PpuMode::VBlank {
+        self.stat.ppu_mode = PpuMode::Rendering;
       }
     }
     if self.pos.x == 0 {
       // new row
       self.pos.y += 1;
+      self.ly = self.pos.y as u8;
+
+      // Update stat reg and trigger interrupt on lyc compare
+      self.stat.lyc_eq_ly = if self.ly == self.lyc {
+        if self.stat.lyc_int_select {
+          self.ic.lazy_dref_mut().raise(Interrupt::Lcd);
+        }
+        true
+      } else {
+        false
+      };
     }
     if self.pos.y == VBLANK_START {
-      self.set_ppu_mode(PpuMode::VBlank);
-      // TODO: raise interrupt
+      self.stat.ppu_mode = PpuMode::VBlank;
+      self.ic.lazy_dref_mut().raise(Interrupt::Vblank);
     }
     if self.pos.y == VBLANK_END {
       self.pos.y = 0;
-      self.set_ppu_mode(PpuMode::Rendering);
+      self.stat.ppu_mode = PpuMode::Rendering;
     }
-    self.ly = self.pos.y as u8;
-    // TODO: Trigger interrupt on lyc compare
-  }
-
-  fn ppu_mode(&self) -> PpuMode {
-    match self.stat.get_bits(STAT_PPU_MODE) {
-      mode if mode == PpuMode::Rendering as u8 => PpuMode::Rendering,
-      mode if mode == PpuMode::VBlank as u8 => PpuMode::VBlank,
-      mode if mode == PpuMode::HBlank as u8 => PpuMode::HBlank,
-      mode if mode == PpuMode::OamScan as u8 => PpuMode::OamScan,
-      // shouldn't be possible
-      _ => panic!("Unknown Ppu Mode!"),
-    }
-  }
-
-  fn set_ppu_mode(&mut self, mode: PpuMode) {
-    self.stat.set_bits(STAT_PPU_MODE, mode as u8);
   }
 }
