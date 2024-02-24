@@ -9,6 +9,7 @@ use std::env::current_dir;
 use std::path::PathBuf;
 
 use crate::bus::Bus;
+use crate::cart::Cartridge;
 use crate::dasm::Dasm;
 use crate::ppu::Ppu;
 use crate::timer::Timer;
@@ -23,6 +24,7 @@ pub struct UiState {
   pub show_stat_window: bool,
   pub show_ppu_reg_window: bool,
   pub show_timer_window: bool,
+  pub show_cart_info_window: bool,
 }
 
 impl UiState {
@@ -35,6 +37,7 @@ impl UiState {
       show_stat_window: false,
       show_ppu_reg_window: false,
       show_timer_window: false,
+      show_cart_info_window: false,
     }
   }
 
@@ -113,6 +116,10 @@ impl Ui {
               ui_state.show_timer_window = !ui_state.show_timer_window;
               ui.close_menu();
             }
+            if ui.button("Cartridge Info").clicked() {
+              ui_state.show_cart_info_window = !ui_state.show_cart_info_window;
+              ui.close_menu();
+            }
           });
 
           if ui.button("Load Cartridge").clicked() {
@@ -189,6 +196,9 @@ impl Ui {
     if ui_state.show_timer_window {
       self.ui_timer(ctx, &mut gb_state.timer.borrow_mut());
     }
+    if ui_state.show_cart_info_window {
+      self.ui_cart_info(ctx, &mut gb_state.cart.borrow_mut());
+    }
   }
 
   fn ui_stat(&self, ctx: &Context, fps: f32, gb_state: &mut GbState) {
@@ -213,6 +223,37 @@ impl Ui {
 
     // reset style
     Self::set_default_style(ctx);
+  }
+
+  fn ui_cart_info(&self, ctx: &Context, cart: &mut Cartridge) {
+    egui::Window::new("CPU Registers")
+      .resizable(false)
+      .show(ctx, |ui| {
+        ui.monospace(format!("Loaded: {}", cart.loaded));
+        ui.monospace("--- Header ---");
+        ui.monospace(format!("Title: {}", cart.header.title));
+        ui.monospace(format!(
+          "Manufacturing Code: {}",
+          cart.header.manufacturing_code
+        ));
+        ui.monospace(format!("GBC Support: {:?}", cart.header.gbc_support));
+        ui.monospace(format!("Publisher: {}", cart.header.publisher));
+        ui.monospace(format!("Mapper: {:?}", cart.header.mapper));
+        ui.monospace(format!("Battery Present: {}", cart.header.battery_present));
+        ui.monospace(format!("Ram Present: {}", cart.header.ram_present));
+        ui.monospace(format!("Num ROM Banks: {}", cart.header.rom_banks));
+        ui.monospace(format!("Num RAM Banks: {}", cart.header.ram_banks));
+        ui.monospace(format!("ROM Version: {}", cart.header.rom_version));
+        ui.monospace(format!(
+          "Header Checksum: 0x{:02X}",
+          cart.header.header_checksum
+        ));
+        ui.monospace(format!(
+          "Global Checksum: 0x{:04X}",
+          cart.header.global_checksum
+        ));
+        // TODO
+      });
   }
 
   fn ui_cpu_reg(&self, ctx: &Context, cpu: &mut Cpu) {

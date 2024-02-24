@@ -126,7 +126,7 @@ impl Register {
 impl Cpu {
   pub fn new() -> Cpu {
     #[cfg(feature = "instr-trace")]
-      let trace_file = {
+    let trace_file = {
       let mut path = env::current_exe().unwrap();
       path.pop();
       path.push("gb_instr_dump.txt");

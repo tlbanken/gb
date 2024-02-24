@@ -1,7 +1,11 @@
 //! Cartridge logic for the gb emulator.
 
+mod header;
+mod mapper;
+
 use crate::err::{GbError, GbErrorType, GbResult};
 use crate::gb_err;
+use header::*;
 use log::{error, info};
 use std::fs;
 use std::path::PathBuf;
@@ -30,16 +34,12 @@ const BOOT_ROM: [u8; 256] = [
 const BOOT_ROM_START: u16 = 0x0000;
 const BOOT_ROM_END: u16 = 0x00ff;
 
-pub struct Header {
-  // TODO
-}
-
 pub struct Cartridge {
-  path: PathBuf,
-  data: Vec<u8>,
-  header: Option<Header>,
-  loaded: bool,
-  boot_mode: bool,
+  pub path: PathBuf,
+  pub data: Vec<u8>,
+  pub header: Header,
+  pub loaded: bool,
+  pub boot_mode: bool,
 }
 
 impl Cartridge {
@@ -47,7 +47,7 @@ impl Cartridge {
     Cartridge {
       path: PathBuf::new(),
       data: Vec::new(),
-      header: None,
+      header: Header::new(),
       loaded: false,
       boot_mode: true,
     }
@@ -64,7 +64,10 @@ impl Cartridge {
     };
     self.path = path.clone();
     info!("Loaded {}", self.path.display());
-    self.read_header();
+    self.header.read_header(&Vec::from(&self.data[0x100..]))?;
+    info!("------- HEADER --------");
+    info!("{:?}", self.header);
+    info!("----- HEADER END ------");
     Ok(())
   }
 
@@ -140,9 +143,5 @@ impl Cartridge {
       _ => return gb_err!(GbErrorType::OutOfBounds),
     }
     Ok(())
-  }
-
-  fn read_header(&mut self) {
-    // TODO
   }
 }

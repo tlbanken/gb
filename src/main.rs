@@ -1,5 +1,7 @@
 //! Gameboy Emulator entry point
 
+extern crate core;
+
 mod bus;
 mod cart;
 mod cpu;
