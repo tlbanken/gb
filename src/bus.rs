@@ -16,16 +16,16 @@ use crate::{
   util::LazyDref,
 };
 
-pub const CART_START: u16 = 0x0000;
-pub const CART_END: u16 = 0x7fff;
+pub const CART_ROM_START: u16 = 0x0000;
+pub const CART_ROM_END: u16 = 0x7fff;
+pub const CART_RAM_START: u16 = 0xa000;
+pub const CART_RAM_END: u16 = 0xbfff;
 pub const CART_IO_START: u16 = 0xff50;
 pub const CART_IO_END: u16 = 0xff50;
 pub const PPU_START: u16 = 0x8000;
 pub const PPU_END: u16 = 0x9fff;
 pub const PPU_IO_START: u16 = 0xff40;
 pub const PPU_IO_END: u16 = 0xff4b;
-pub const ERAM_START: u16 = 0xa000;
-pub const ERAM_END: u16 = 0xbfff;
 pub const WRAM_START: u16 = 0xc000;
 pub const WRAM_END: u16 = 0xdfff;
 pub const TIMER_START: u16 = 0xff04;
@@ -41,7 +41,6 @@ pub const IE_ADDR: u16 = 0xffff;
 pub const IF_ADDR: u16 = 0xff0f;
 pub struct Bus {
   wram: Option<Rc<RefCell<Ram>>>,
-  eram: Option<Rc<RefCell<Ram>>>,
   hram: Option<Rc<RefCell<Ram>>>,
   cart: Option<Rc<RefCell<Cartridge>>>,
   ppu: Option<Rc<RefCell<Ppu>>>,
@@ -53,7 +52,6 @@ impl Bus {
   pub fn new() -> Bus {
     Bus {
       wram: None,
-      eram: None,
       hram: None,
       cart: None,
       ppu: None,
@@ -67,16 +65,6 @@ impl Bus {
     debug!("Connecting working ram to the bus");
     match self.wram {
       None => self.wram = Some(wram),
-      Some(_) => return gb_err!(GbErrorType::AlreadyInitialized),
-    }
-    Ok(())
-  }
-
-  /// Adds a reference to the external ram to the bus
-  pub fn connect_eram(&mut self, eram: Rc<RefCell<Ram>>) -> GbResult<()> {
-    debug!("Connecting external ram to the bus");
-    match self.eram {
-      None => self.eram = Some(eram),
       Some(_) => return gb_err!(GbErrorType::AlreadyInitialized),
     }
     Ok(())
@@ -138,11 +126,11 @@ impl Bus {
 
     // read with relative addressing
     match addr {
-      CART_START..=CART_END => self.cart.lazy_dref().read(addr - CART_START),
+      CART_ROM_START..=CART_ROM_END => self.cart.lazy_dref().read(addr),
+      CART_RAM_START..=CART_RAM_END => self.cart.lazy_dref().read(addr),
       CART_IO_START..=CART_IO_END => self.cart.lazy_dref().io_read(addr),
       PPU_START..=PPU_END => self.ppu.lazy_dref().read(addr - PPU_START),
       PPU_IO_START..=PPU_IO_END => self.ppu.lazy_dref().io_read(addr),
-      ERAM_START..=ERAM_END => self.eram.lazy_dref().read(addr - ERAM_START),
       WRAM_START..=WRAM_END => self.wram.lazy_dref().read(addr - WRAM_START),
       HRAM_START..=HRAM_END => self.hram.lazy_dref().read(addr - HRAM_START),
       TIMER_START..=TIMER_END => self.timer.lazy_dref().read(addr),
@@ -161,9 +149,13 @@ impl Bus {
 
     // read with relative addressing
     Ok(match addr {
-      CART_START..=CART_END => u16::from_le_bytes([
-        self.cart.lazy_dref().read(addr - CART_START)?,
-        self.cart.lazy_dref().read(addr - CART_START + 1)?,
+      CART_ROM_START..=CART_ROM_END => u16::from_le_bytes([
+        self.cart.lazy_dref().read(addr)?,
+        self.cart.lazy_dref().read(addr + 1)?,
+      ]),
+      CART_RAM_START..=CART_RAM_END => u16::from_le_bytes([
+        self.cart.lazy_dref().read(addr)?,
+        self.cart.lazy_dref().read(addr + 1)?,
       ]),
       CART_IO_START..=CART_IO_END => u16::from_le_bytes([
         self.cart.lazy_dref().io_read(addr)?,
@@ -176,10 +168,6 @@ impl Bus {
       PPU_IO_START..=PPU_IO_END => u16::from_le_bytes([
         self.ppu.lazy_dref().io_read(addr)?,
         self.ppu.lazy_dref().io_read(addr + 1)?,
-      ]),
-      ERAM_START..=ERAM_END => u16::from_le_bytes([
-        self.eram.lazy_dref().read(addr - ERAM_START)?,
-        self.eram.lazy_dref().read(addr - ERAM_START + 1)?,
       ]),
       WRAM_START..=WRAM_END => u16::from_le_bytes([
         self.wram.lazy_dref().read(addr - WRAM_START)?,
@@ -212,11 +200,11 @@ impl Bus {
 
     // write with relative addressing
     match addr {
-      CART_START..=CART_END => self.cart.lazy_dref_mut().write(addr - CART_START, val),
+      CART_ROM_START..=CART_ROM_END => self.cart.lazy_dref_mut().write(addr, val),
+      CART_RAM_START..=CART_RAM_END => self.cart.lazy_dref_mut().write(addr, val),
       CART_IO_START..=CART_IO_END => self.cart.lazy_dref_mut().io_write(addr, val),
       PPU_START..=PPU_END => self.ppu.lazy_dref_mut().write(addr - PPU_START, val),
       PPU_IO_START..=PPU_IO_END => self.ppu.lazy_dref_mut().io_write(addr, val),
-      ERAM_START..=ERAM_END => self.eram.lazy_dref_mut().write(addr - ERAM_START, val),
       WRAM_START..=WRAM_END => self.wram.lazy_dref_mut().write(addr - WRAM_START, val),
       HRAM_START..=HRAM_END => self.hram.lazy_dref_mut().write(addr - HRAM_START, val),
       TIMER_START..=TIMER_END => self.timer.lazy_dref_mut().write(addr, val),
@@ -236,15 +224,13 @@ impl Bus {
     // write with relative addressing
     let bytes = val.to_le_bytes();
     Ok(match addr {
-      CART_START..=CART_END => {
-        self
-          .cart
-          .lazy_dref_mut()
-          .write(addr - CART_START, bytes[0])?;
-        self
-          .cart
-          .lazy_dref_mut()
-          .write(addr - CART_START + 1, bytes[1])?;
+      CART_ROM_START..=CART_ROM_END => {
+        self.cart.lazy_dref_mut().write(addr, bytes[0])?;
+        self.cart.lazy_dref_mut().write(addr + 1, bytes[1])?;
+      }
+      CART_RAM_START..=CART_RAM_END => {
+        self.cart.lazy_dref_mut().write(addr, bytes[0])?;
+        self.cart.lazy_dref_mut().write(addr + 1, bytes[1])?;
       }
       CART_IO_START..=CART_IO_END => {
         self.cart.lazy_dref_mut().io_write(addr, bytes[0])?;
@@ -260,16 +246,6 @@ impl Bus {
       PPU_IO_START..=PPU_IO_END => {
         self.ppu.lazy_dref_mut().io_write(addr, bytes[0])?;
         self.ppu.lazy_dref_mut().io_write(addr + 1, bytes[1])?;
-      }
-      ERAM_START..=ERAM_END => {
-        self
-          .eram
-          .lazy_dref_mut()
-          .write(addr - ERAM_START, bytes[0])?;
-        self
-          .eram
-          .lazy_dref_mut()
-          .write(addr - ERAM_START + 1, bytes[1])?;
       }
       WRAM_START..=WRAM_END => {
         self

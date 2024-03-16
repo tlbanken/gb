@@ -27,7 +27,6 @@ impl EmuFlow {
 
 pub struct GbState {
   pub bus: Rc<RefCell<Bus>>,
-  pub eram: Rc<RefCell<Ram>>,
   pub wram: Rc<RefCell<Ram>>,
   pub hram: Rc<RefCell<Ram>>,
   pub cart: Rc<RefCell<Cartridge>>,
@@ -45,7 +44,6 @@ impl GbState {
   pub fn new(paused: bool) -> GbState {
     GbState {
       bus: Rc::new(RefCell::new(Bus::new())),
-      eram: Rc::new(RefCell::new(Ram::new(8 * 1024))),
       wram: Rc::new(RefCell::new(Ram::new(8 * 1024))),
       hram: Rc::new(RefCell::new(Ram::new(127))),
       cart: Rc::new(RefCell::new(Cartridge::new())),
@@ -69,7 +67,6 @@ impl GbState {
     self.ic.borrow_mut().connect_cpu(self.cpu.clone())?;
 
     // connect Bus to memory
-    self.bus.borrow_mut().connect_eram(self.eram.clone())?;
     self.bus.borrow_mut().connect_wram(self.wram.clone())?;
     self.bus.borrow_mut().connect_hram(self.hram.clone())?;
     self.bus.borrow_mut().connect_cartridge(self.cart.clone())?;

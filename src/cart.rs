@@ -2,7 +2,12 @@
 
 mod header;
 mod mapper;
+mod mbc1;
+mod no_mbc;
 
+use crate::cart::mapper::{Mapper, MapperType};
+use crate::cart::mbc1::Mbc1;
+use crate::cart::no_mbc::NoMbc;
 use crate::err::{GbError, GbErrorType, GbResult};
 use crate::gb_err;
 use header::*;
@@ -34,9 +39,22 @@ const BOOT_ROM: [u8; 256] = [
 const BOOT_ROM_START: u16 = 0x0000;
 const BOOT_ROM_END: u16 = 0x00ff;
 
+// 8 KB ram banks
+pub const RAM_BANK_SIZE: usize = 8 * 1024;
+// External Ram start
+pub const ERAM_START: u16 = 0xa000;
+pub const ERAM_END: u16 = 0xbfff;
+// ROM Banks Addresses
+pub const ROM0_START: u16 = 0x0000;
+pub const ROM0_END: u16 = 0x3fff;
+pub const ROM1_START: u16 = 0x4000;
+pub const ROM1_END: u16 = 0x7fff;
+
+pub const ROM_BANK_SIZE: u16 = 16 * 1024;
+
 pub struct Cartridge {
   pub path: PathBuf,
-  pub data: Vec<u8>,
+  pub mbc: Option<Box<dyn Mapper>>,
   pub header: Header,
   pub loaded: bool,
   pub boot_mode: bool,
@@ -45,8 +63,8 @@ pub struct Cartridge {
 impl Cartridge {
   pub fn new() -> Cartridge {
     Cartridge {
+      mbc: None,
       path: PathBuf::new(),
-      data: Vec::new(),
       header: Header::new(),
       loaded: false,
       boot_mode: true,
@@ -55,7 +73,7 @@ impl Cartridge {
 
   pub fn load(&mut self, path: PathBuf) -> GbResult<()> {
     self.loaded = true;
-    self.data = match fs::read(path.clone()) {
+    let rom = match fs::read(path.clone()) {
       Ok(data) => data,
       Err(why) => {
         error!("Failed to load {}: {}", path.display(), why);
@@ -64,19 +82,15 @@ impl Cartridge {
     };
     self.path = path.clone();
     info!("Loaded {}", self.path.display());
-    self.header.read_header(&Vec::from(&self.data[0x100..]))?;
+    self.header.read_header(&Vec::from(&rom[0x100..]))?;
     info!("------- HEADER --------");
     info!("{:?}", self.header);
     info!("----- HEADER END ------");
-    Ok(())
-  }
-
-  pub fn unload(&mut self) -> GbResult<()> {
-    self.loaded = false;
-    // reset banks
-    self.boot_mode = true;
-    self.data.clear();
-    // TODO: maybe easier to just send a reset signal?
+    match self.header.mapper {
+      MapperType::None => self.mbc = Some(Box::new(NoMbc::new(rom, self.header.ram_banks))),
+      MapperType::Mbc1 => self.mbc = Some(Box::new(Mbc1::new(rom, self.header.ram_banks))),
+      _ => return gb_err!(GbErrorType::Unsupported),
+    }
     Ok(())
   }
 
@@ -94,12 +108,12 @@ impl Cartridge {
         if self.boot_mode {
           BOOT_ROM[addr as usize]
         } else {
-          self.data[addr as usize]
+          self.mbc.as_ref().unwrap().read(addr)?
         }
       }
       _ => {
         if self.loaded {
-          self.data[addr as usize]
+          self.mbc.as_ref().unwrap().read(addr)?
         } else {
           // when no cartridge loaded, returns 0xff
           0xff
@@ -112,18 +126,16 @@ impl Cartridge {
     match addr {
       BOOT_ROM_START..=BOOT_ROM_END => {
         if self.boot_mode {
-          unimplemented!()
+          panic!("Writing to BOOT ROM")
         } else {
-          unimplemented!()
+          self.mbc.as_mut().unwrap().write(addr, val)?
         }
       }
       _ => {
         if self.loaded {
-          // unimplemented!()
-          self.data[addr as usize] = val;
+          self.mbc.as_mut().unwrap().write(addr, val)?
         } else {
-          // when no cartridge loaded, returns 0xff
-          unimplemented!()
+          panic!("Writing with no cartrige loaded")
         }
       }
     }

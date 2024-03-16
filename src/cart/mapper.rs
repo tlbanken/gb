@@ -1,5 +1,7 @@
 //! Base class for all mappers
 
+use crate::err::GbResult;
+
 #[derive(Debug)]
 pub enum MapperType {
   None,
@@ -15,4 +17,9 @@ pub enum MapperType {
   HuC1,
   HuC3,
   Other,
+}
+
+pub trait Mapper {
+  fn read(&self, addr: u16) -> GbResult<u8>;
+  fn write(&mut self, addr: u16, val: u8) -> GbResult<()>;
 }

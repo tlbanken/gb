@@ -33,4 +33,5 @@ pub enum GbErrorType {
   InvalidCpuInstruction,
   FileError,
   BadValue,
+  Unsupported,
 }
