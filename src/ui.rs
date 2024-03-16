@@ -161,6 +161,32 @@ impl Ui {
               .send_event(UserEvent::EmuReset(gb_state.cart.borrow().cart_path()))
               .unwrap();
           }
+          ui.menu_button("Speed", |ui| {
+            if ui.button(".01%").clicked() {
+              gb_state.flow.speed = 0.0001;
+              ui.close_menu();
+            }
+            if ui.button("1%").clicked() {
+              gb_state.flow.speed = 0.01;
+              ui.close_menu();
+            }
+            if ui.button("25%").clicked() {
+              gb_state.flow.speed = 0.25;
+              ui.close_menu();
+            }
+            if ui.button("50%").clicked() {
+              gb_state.flow.speed = 0.50;
+              ui.close_menu();
+            }
+            if ui.button("75%").clicked() {
+              gb_state.flow.speed = 0.75;
+              ui.close_menu();
+            }
+            if ui.button("100%").clicked() {
+              gb_state.flow.speed = 1.00;
+              ui.close_menu();
+            }
+          });
           ui.monospace("  |  ");
 
           // stats

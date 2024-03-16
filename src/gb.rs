@@ -17,7 +17,7 @@ use crate::gb_err;
 use crate::logger::Logger;
 use crate::ram::*;
 use crate::screen::{Color, Pos};
-use crate::state::GbState;
+use crate::state::{EmuFlow, GbState};
 use crate::ui::Ui;
 use crate::video::Video;
 
@@ -50,7 +50,7 @@ impl Gameboy {
   pub fn new(level_filter: LevelFilter) -> Gameboy {
     init_logging(level_filter);
 
-    let state = GbState::new(false);
+    let state = GbState::new(EmuFlow::new(false, false, 1.0));
 
     Gameboy {
       state,
@@ -155,8 +155,8 @@ impl Gameboy {
         UserEvent::EmuPlay => self.state.flow.paused = false,
         UserEvent::EmuStep => self.state.flow.step = true,
         UserEvent::EmuReset(path) => {
-          let paused = self.state.flow.paused;
-          self.state = GbState::new(paused);
+          let flow = self.state.flow;
+          self.state = GbState::new(flow);
           self.state.init(video.screen())?;
           if let Some(path_unwrapped) = path {
             self.state.cart.borrow_mut().load(path_unwrapped)?;

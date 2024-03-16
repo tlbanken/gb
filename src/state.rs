@@ -11,16 +11,19 @@ use crate::{bus::Bus, cart::Cartridge, cpu, cpu::Cpu, err::GbResult, ppu::Ppu, r
 /// Alpha used when calculating the rolling average
 const CLOCK_RATE_ALPHA: f32 = 0.999;
 
+#[derive(Copy, Clone)]
 pub struct EmuFlow {
   pub paused: bool,
   pub step: bool,
+  pub speed: f32,
 }
 
 impl EmuFlow {
-  pub fn new(paused: bool) -> EmuFlow {
+  pub fn new(paused: bool, step: bool, speed: f32) -> EmuFlow {
     EmuFlow {
       paused,
-      step: false,
+      step,
+      speed,
     }
   }
 }
@@ -41,7 +44,7 @@ pub struct GbState {
 }
 
 impl GbState {
-  pub fn new(paused: bool) -> GbState {
+  pub fn new(flow: EmuFlow) -> GbState {
     GbState {
       bus: Rc::new(RefCell::new(Bus::new())),
       wram: Rc::new(RefCell::new(Ram::new(8 * 1024))),
@@ -51,7 +54,7 @@ impl GbState {
       ppu: Rc::new(RefCell::new(Ppu::new())),
       ic: Rc::new(RefCell::new(Interrupts::new())),
       timer: Rc::new(RefCell::new(Timer::new())),
-      flow: EmuFlow::new(paused),
+      flow,
       cycles: TickCounter::new(CLOCK_RATE_ALPHA),
       clock_rate: 0.0,
     }
@@ -104,14 +107,15 @@ impl GbState {
   fn step_chunk(&mut self) -> GbResult<()> {
     // if we are running too fast, skip
     let clock_rate = self.cycles.tps();
-    if clock_rate > cpu::CLOCK_RATE {
+    let target_pace = cpu::CLOCK_RATE * self.flow.speed;
+    if clock_rate > target_pace {
       return Ok(());
     }
     // only show clock rate when we are doing work
     self.clock_rate = clock_rate;
 
     // how many steps in a chunk
-    const CHUNK_SIZE: u32 = 80;
+    const CHUNK_SIZE: u32 = 4;
 
     for _ in 0..CHUNK_SIZE {
       self.step_one()?;

@@ -204,7 +204,7 @@ pub struct Ppu {
   ic: Option<Rc<RefCell<Interrupts>>>,
 
   // current screen position we are drawing
-  pos: screen::Pos,
+  pos: Pos,
 }
 
 impl Ppu {
@@ -269,7 +269,9 @@ impl Ppu {
       let tile_data_index = self.get_tile_map_entry(pos);
       trace!("Tile Data Index: {}", tile_data_index);
       // next we get the tile data info
-      let bg_color = self.get_color_from_tile_data(self.get_tile_data_location(tile_data_index));
+      let tile_data = self.get_tile_data_location(tile_data_index, pos);
+      // now transform that tile data into a color
+      let bg_color = self.get_color_from_tile_data(tile_data);
       trace!("BG Color: {:?}", bg_color);
 
       // TODO: Render Objects
@@ -343,12 +345,12 @@ impl Ppu {
   }
 
   /// Get the vram offset for the tile that matches the given `index`
-  fn get_tile_data_location(&self, index: u8) -> u16 {
+  fn get_tile_data_location(&self, index: u8, scrolled_pos: Pos) -> u16 {
     // TODO: this should be determined by LCDC.4
     let tile_data_start = TILE_DATA_START_LO;
     let location_start = tile_data_start + (index as u16 * TILE_DATA_SIZE as u16);
     // use the y position to figure out which row of the tile we are on
-    let fine_y = self.pos.y as u16 % 8;
+    let fine_y = scrolled_pos.y as u16 % 8;
     // a row is 2 bytes
     location_start + (2 * fine_y)
   }
