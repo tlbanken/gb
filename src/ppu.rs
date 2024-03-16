@@ -6,7 +6,7 @@ use crate::screen::{Pos, Screen};
 use crate::util::LazyDref;
 use crate::{bus, gb_err, screen};
 use bit_field::BitField;
-use log::{trace, warn};
+use log::{error, trace, warn};
 use std::cell::RefCell;
 use std::ops::Range;
 use std::rc::Rc;
@@ -28,7 +28,7 @@ const VRAM_SIZE: usize = 8 * 1024;
 const TILE_MAP_START_LO: u16 = 0x9800 - bus::PPU_START;
 const TILE_MAP_START_HI: u16 = 0x9C00 - bus::PPU_START;
 const TILE_DATA_START_LO: u16 = 0x8000 - bus::PPU_START;
-const TILE_DATA_START_HI: u16 = 0x8800 - bus::PPU_START;
+const TILE_DATA_START_HI: u16 = 0x9000 - bus::PPU_START;
 const TILE_DATA_SIZE: u8 = 16;
 const SCREEN_WIDTH: u8 = screen::GB_RESOLUTION.width as u8;
 const SCREEN_HEIGHT: u8 = screen::GB_RESOLUTION.height as u8;
@@ -69,7 +69,7 @@ impl From<u8> for PpuMode {
   }
 }
 
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, Debug)]
 struct LcdControl {
   /// bit 0: 0 = Off; 1 = On
   pub bg_win_enable: bool,
@@ -78,9 +78,9 @@ struct LcdControl {
   /// bit 2: 0 = 8×8; 1 = 8×16
   pub obj_size_large: bool,
   /// bit 3: 0 = 9800–9BFF; 1 = 9C00–9FFF
-  pub tile_map_hi: bool,
+  pub bg_tile_map_hi: bool,
   /// bit 4: 0 = 8800–97FF; 1 = 8000–8FFF
-  pub win_bg_data_map_lo: bool,
+  pub win_and_bg_data_map_lo: bool,
   /// bit 5: 0 = Off; 1 = On
   pub win_enabled: bool,
   /// bit 6: 0 = 9800–9BFF; 1 = 9C00–9FFF
@@ -95,8 +95,8 @@ impl From<u8> for LcdControl {
       bg_win_enable: value.get_bit(0),
       obj_enabled: value.get_bit(1),
       obj_size_large: value.get_bit(2),
-      tile_map_hi: value.get_bit(3),
-      win_bg_data_map_lo: value.get_bit(4),
+      bg_tile_map_hi: value.get_bit(3),
+      win_and_bg_data_map_lo: value.get_bit(4),
       win_enabled: value.get_bit(5),
       win_tile_map_hi: value.get_bit(6),
       ppu_enabled: value.get_bit(7),
@@ -110,8 +110,8 @@ impl From<LcdControl> for u8 {
     val_u8.set_bit(0, value.bg_win_enable);
     val_u8.set_bit(1, value.obj_enabled);
     val_u8.set_bit(2, value.obj_size_large);
-    val_u8.set_bit(3, value.tile_map_hi);
-    val_u8.set_bit(4, value.win_bg_data_map_lo);
+    val_u8.set_bit(3, value.bg_tile_map_hi);
+    val_u8.set_bit(4, value.win_and_bg_data_map_lo);
     val_u8.set_bit(5, value.win_enabled);
     val_u8.set_bit(6, value.win_tile_map_hi);
     val_u8.set_bit(7, value.ppu_enabled);
@@ -339,16 +339,28 @@ impl Ppu {
     let y_byte = (pos.y / 8) as u16;
     let x_byte = (pos.x / 8) as u16;
     let map_index = y_byte * 32 + x_byte;
-    // TODO: for now we will read from $9800, but we should really check LCDC.3
-    let map_start = TILE_MAP_START_LO;
+    // TODO: This seems to not be working :/
+    let map_start = if self.lcdc.bg_tile_map_hi {
+      TILE_MAP_START_HI
+    } else {
+      TILE_MAP_START_LO
+    };
     self.vram[(map_start + map_index) as usize]
   }
 
   /// Get the vram offset for the tile that matches the given `index`
   fn get_tile_data_location(&self, index: u8, scrolled_pos: Pos) -> u16 {
-    // TODO: this should be determined by LCDC.4
-    let tile_data_start = TILE_DATA_START_LO;
-    let location_start = tile_data_start + (index as u16 * TILE_DATA_SIZE as u16);
+    // TODO: This seems to not be working :/
+    let location_start = if self.lcdc.win_and_bg_data_map_lo {
+      TILE_DATA_START_LO + (index as u16 * TILE_DATA_SIZE as u16)
+    } else {
+      // indexing using this mode requires using a signed index since we can index
+      // backwards
+      let mut signed_index = index as i8;
+      let signed_start = TILE_DATA_START_HI as i32 + (signed_index as i32 * TILE_DATA_SIZE as i32);
+      assert!(signed_start >= 0);
+      signed_start as u16
+    };
     // use the y position to figure out which row of the tile we are on
     let fine_y = scrolled_pos.y as u16 % 8;
     // a row is 2 bytes
