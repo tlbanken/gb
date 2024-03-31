@@ -5,13 +5,12 @@ use egui::{
 };
 use egui_winit::winit::event_loop::EventLoopProxy;
 use rfd::FileDialog;
-use std::env::current_dir;
 use std::path::PathBuf;
 
 use crate::bus::Bus;
 use crate::cart::Cartridge;
 use crate::dasm::Dasm;
-use crate::ppu::Ppu;
+use crate::ppu::{self, Ppu};
 use crate::timer::Timer;
 use crate::util::LazyDref;
 use crate::{cpu, cpu::Cpu, event::UserEvent, state::GbState};
@@ -23,6 +22,7 @@ pub struct UiState {
   pub show_mem_window: bool,
   pub show_stat_window: bool,
   pub show_ppu_reg_window: bool,
+  pub show_ppu_palette_window: bool,
   pub show_timer_window: bool,
   pub show_cart_info_window: bool,
 }
@@ -36,6 +36,7 @@ impl UiState {
       show_mem_window: false,
       show_stat_window: false,
       show_ppu_reg_window: false,
+      show_ppu_palette_window: false,
       show_timer_window: false,
       show_cart_info_window: false,
     }
@@ -105,6 +106,10 @@ impl Ui {
               // registers
               if ui.button("Registers").clicked() {
                 ui_state.show_ppu_reg_window = !ui_state.show_ppu_reg_window;
+                ui.close_menu();
+              }
+              if ui.button("Palettes").clicked() {
+                ui_state.show_ppu_palette_window = !ui_state.show_ppu_palette_window;
                 ui.close_menu();
               }
             });
@@ -218,6 +223,9 @@ impl Ui {
     }
     if ui_state.show_ppu_reg_window {
       self.ui_ppu_reg(ctx, &mut gb_state.ppu.borrow_mut());
+    }
+    if ui_state.show_ppu_palette_window {
+      self.ui_ppu_palettes(ctx, &mut gb_state.ppu.borrow_mut());
     }
     if ui_state.show_timer_window {
       self.ui_timer(ctx, &mut gb_state.timer.borrow_mut());
@@ -348,6 +356,20 @@ impl Ui {
         break output;
       }
     }
+  }
+
+  fn ui_ppu_palettes(&self, ctx: &Context, ppu: &mut Ppu) {
+    egui::Window::new("Palettes").show(ctx, |ui| {
+      if ui.button("GRAY").clicked() {
+        ppu.palette = ppu::PALETTE_GRAY;
+      }
+      if ui.button("GREEN").clicked() {
+        ppu.palette = ppu::PALETTE_GREEN;
+      }
+      if ui.button("BLUE").clicked() {
+        ppu.palette = ppu::PALETTE_BLUE;
+      }
+    });
   }
 
   fn ui_ppu_reg(&self, ctx: &Context, ppu: &mut Ppu) {

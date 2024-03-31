@@ -26,6 +26,9 @@ pub const PPU_START: u16 = 0x8000;
 pub const PPU_END: u16 = 0x9fff;
 pub const PPU_IO_START: u16 = 0xff40;
 pub const PPU_IO_END: u16 = 0xff4b;
+pub const PPU_IO_DMA: u16 = 0xff46;
+pub const OAM_START: u16 = 0xfe00;
+pub const OAM_END: u16 = 0xfe9f;
 pub const WRAM_START: u16 = 0xc000;
 pub const WRAM_END: u16 = 0xdfff;
 pub const TIMER_START: u16 = 0xff04;
@@ -129,7 +132,7 @@ impl Bus {
       CART_ROM_START..=CART_ROM_END => self.cart.lazy_dref().read(addr),
       CART_RAM_START..=CART_RAM_END => self.cart.lazy_dref().read(addr),
       CART_IO_START..=CART_IO_END => self.cart.lazy_dref().io_read(addr),
-      PPU_START..=PPU_END => self.ppu.lazy_dref().read(addr - PPU_START),
+      PPU_START..=PPU_END | OAM_START..=OAM_END => self.ppu.lazy_dref().read(addr),
       PPU_IO_START..=PPU_IO_END => self.ppu.lazy_dref().io_read(addr),
       WRAM_START..=WRAM_END => self.wram.lazy_dref().read(addr - WRAM_START),
       HRAM_START..=HRAM_END => self.hram.lazy_dref().read(addr - HRAM_START),
@@ -161,9 +164,9 @@ impl Bus {
         self.cart.lazy_dref().io_read(addr)?,
         self.cart.lazy_dref().io_read(addr + 1)?,
       ]),
-      PPU_START..=PPU_END => u16::from_le_bytes([
-        self.ppu.lazy_dref().read(addr - PPU_START)?,
-        self.ppu.lazy_dref().read(addr - PPU_START + 1)?,
+      PPU_START..=PPU_END | OAM_START..=OAM_END => u16::from_le_bytes([
+        self.ppu.lazy_dref().read(addr)?,
+        self.ppu.lazy_dref().read(addr + 1)?,
       ]),
       PPU_IO_START..=PPU_IO_END => u16::from_le_bytes([
         self.ppu.lazy_dref().io_read(addr)?,
@@ -203,8 +206,24 @@ impl Bus {
       CART_ROM_START..=CART_ROM_END => self.cart.lazy_dref_mut().write(addr, val),
       CART_RAM_START..=CART_RAM_END => self.cart.lazy_dref_mut().write(addr, val),
       CART_IO_START..=CART_IO_END => self.cart.lazy_dref_mut().io_write(addr, val),
-      PPU_START..=PPU_END => self.ppu.lazy_dref_mut().write(addr - PPU_START, val),
-      PPU_IO_START..=PPU_IO_END => self.ppu.lazy_dref_mut().io_write(addr, val),
+      PPU_START..=PPU_END | OAM_START..=OAM_END => self.ppu.lazy_dref_mut().write(addr, val),
+      PPU_IO_START..=PPU_IO_END => {
+        if addr == PPU_IO_DMA {
+          debug!("DMA Start");
+          // easiest to just perform the dma here
+          for offset in 0..=0x9f {
+            let src_byte = self.read8(((val as u16) << 8) | offset)?;
+            self
+              .ppu
+              .lazy_dref_mut()
+              .write(OAM_START + offset, src_byte)?;
+          }
+          debug!("DMA End");
+          Ok(())
+        } else {
+          self.ppu.lazy_dref_mut().io_write(addr, val)
+        }
+      }
       WRAM_START..=WRAM_END => self.wram.lazy_dref_mut().write(addr - WRAM_START, val),
       HRAM_START..=HRAM_END => self.hram.lazy_dref_mut().write(addr - HRAM_START, val),
       TIMER_START..=TIMER_END => self.timer.lazy_dref_mut().write(addr, val),
@@ -236,12 +255,9 @@ impl Bus {
         self.cart.lazy_dref_mut().io_write(addr, bytes[0])?;
         self.cart.lazy_dref_mut().io_write(addr + 1, bytes[1])?;
       }
-      PPU_START..=PPU_END => {
-        self.ppu.lazy_dref_mut().write(addr - PPU_START, bytes[0])?;
-        self
-          .ppu
-          .lazy_dref_mut()
-          .write(addr - PPU_START + 1, bytes[1])?;
+      PPU_START..=PPU_END | OAM_START..=OAM_END => {
+        self.ppu.lazy_dref_mut().write(addr, bytes[0])?;
+        self.ppu.lazy_dref_mut().write(addr + 1, bytes[1])?;
       }
       PPU_IO_START..=PPU_IO_END => {
         self.ppu.lazy_dref_mut().io_write(addr, bytes[0])?;

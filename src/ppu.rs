@@ -4,11 +4,13 @@ use crate::err::{GbError, GbErrorType, GbResult};
 use crate::int::{Interrupt, Interrupts};
 use crate::screen::{Pos, Screen};
 use crate::util::LazyDref;
-use crate::{bus, gb_err, screen};
+use crate::{
+  bus::{self, OAM_END, OAM_START, PPU_END, PPU_START},
+  gb_err, screen,
+};
 use bit_field::BitField;
-use log::{error, trace, warn};
+use log::{trace, warn};
 use std::cell::RefCell;
-use std::ops::Range;
 use std::rc::Rc;
 
 const LCDC_ADDR: u16 = 0xff40;
@@ -19,33 +21,36 @@ const LY_ADDR: u16 = 0xff44;
 const LYC_ADDR: u16 = 0xff45;
 const BGP_ADDR: u16 = 0xff47;
 
-// screen constants
-const TRUE_NUM_ROWS: u16 = 256;
-const TRUE_NUM_COLS: u16 = 256;
-
 // addresses for vram
 const VRAM_SIZE: usize = 8 * 1024;
+const OAM_SIZE: usize = 160;
 const TILE_MAP_START_LO: u16 = 0x9800 - bus::PPU_START;
 const TILE_MAP_START_HI: u16 = 0x9C00 - bus::PPU_START;
 const TILE_DATA_START_LO: u16 = 0x8000 - bus::PPU_START;
 const TILE_DATA_START_HI: u16 = 0x9000 - bus::PPU_START;
 const TILE_DATA_SIZE: u8 = 16;
-const SCREEN_WIDTH: u8 = screen::GB_RESOLUTION.width as u8;
-const SCREEN_HEIGHT: u8 = screen::GB_RESOLUTION.height as u8;
 
 // Color Palettes
-const PALETTE_GRAY: [screen::Color; 4] = [
+pub const PALETTE_GRAY: [screen::Color; 4] = [
   screen::Color::new(1.0, 1.0, 1.0), // white
   screen::Color::new(0.7, 0.7, 0.7), // light gray
   screen::Color::new(0.3, 0.3, 0.3), // dark gray
   screen::Color::new(0.0, 0.0, 0.0), // black
 ];
 
-const PALETTE_GREEN: [screen::Color; 4] = [
+pub const PALETTE_GREEN: [screen::Color; 4] = [
   screen::Color::new(155.0 / 255.0, 188.0 / 255.0, 15.0 / 255.0), // white
   screen::Color::new(139.0 / 255.0, 172.0 / 255.0, 15.0 / 255.0), // light gray
   screen::Color::new(48.0 / 255.0, 98.0 / 255.0, 48.0 / 255.0),   // dark gray
   screen::Color::new(15.0 / 255.0, 56.0 / 255.0, 15.0 / 255.0),   // black
+];
+
+// Custom color for fun
+pub const PALETTE_BLUE: [screen::Color; 4] = [
+  screen::Color::new(52.0 / 255.0, 204.0 / 255.0, 235.0 / 255.0), // white
+  screen::Color::new(52.0 / 255.0, 137.0 / 255.0, 225.0 / 255.0), // light gray
+  screen::Color::new(48.0 / 255.0, 48.0 / 255.0, 98.0 / 255.0),   // dark gray
+  screen::Color::new(15.0 / 255.0, 15.0 / 255.0, 55.0 / 255.0),   // black
 ];
 
 #[derive(PartialEq, Copy, Clone)]
@@ -70,7 +75,7 @@ impl From<u8> for PpuMode {
 }
 
 #[derive(Copy, Clone, Debug)]
-struct LcdControl {
+pub struct LcdControl {
   /// bit 0: 0 = Off; 1 = On
   pub bg_win_enable: bool,
   /// bit 1: 0 = Off; 1 = On
@@ -174,8 +179,46 @@ impl From<Status> for u8 {
   }
 }
 
+#[derive(Copy, Clone)]
+struct ObjAttrFlags {
+  pub low_priority: bool,
+  pub flip_y: bool,
+  pub flip_x: bool,
+  // CGB attributes not included
+}
+
+impl From<u8> for ObjAttrFlags {
+  fn from(value: u8) -> Self {
+    Self {
+      low_priority: value.get_bit(7),
+      flip_y: value.get_bit(6),
+      flip_x: value.get_bit(5),
+    }
+  }
+}
+
+#[derive(Copy, Clone)]
+struct ObjectAttribute {
+  pub y_pos: u8,
+  pub x_pos: u8,
+  pub tile_idx: u8,
+  pub flags: ObjAttrFlags,
+}
+
+impl From<[u8; 4]> for ObjectAttribute {
+  fn from(value: [u8; 4]) -> Self {
+    Self {
+      y_pos: value[0],
+      x_pos: value[1],
+      tile_idx: value[2],
+      flags: ObjAttrFlags::from(value[3]),
+    }
+  }
+}
+
 pub struct Ppu {
   pub vram: Vec<u8>,
+  pub oam: Vec<u8>,
   /// lcd control register
   pub lcdc: LcdControl,
   /// LCD y coord ranged from 0-153 (read-only)
@@ -190,9 +233,11 @@ pub struct Ppu {
   pub scx: u8,
   /// Scroll Y
   pub scy: u8,
+  /// OAM Cache (max 10 items)
+  oam_cache: Vec<ObjectAttribute>,
 
   // palette
-  palette: [screen::Color; 4],
+  pub palette: [screen::Color; 4],
 
   // timing helpers
   vblank_left: u32,
@@ -215,6 +260,8 @@ impl Ppu {
 
     Ppu {
       vram: vec![0; VRAM_SIZE],
+      oam: vec![0; OAM_SIZE],
+      oam_cache: Vec::new(),
       lcdc: 0.into(),
       stat,
       ly: 0,
@@ -262,26 +309,34 @@ impl Ppu {
       let pos = self.pos_with_scroll();
       trace!("Adjusted Pos: {:?}", pos);
 
-      // TODO: Render background
+      // Render background
       // figure out the tile map entry we are on in the tile map table
       // use the tile map entry to read the tile data in the tile data table
       // use the tile data entry to figure out the color of the pixel
       let tile_data_index = self.get_tile_map_entry(pos);
-      trace!("Tile Data Index: {}", tile_data_index);
       // next we get the tile data info
       let tile_data = self.get_tile_data_location(tile_data_index, pos);
       // now transform that tile data into a color
-      let bg_color = self.get_color_from_tile_data(tile_data);
-      trace!("BG Color: {:?}", bg_color);
+      let mut pixel_color = self.get_color_from_tile_data(tile_data);
 
       // TODO: Render Objects
+      // find obj attribute from cache
+      if let Some(attr) = self.get_cached_obj_attr() {
+        // get object color
+        let obj_color = self.get_color_from_attribute(&attr);
+
+        // check if object should be drawn over background
+        if !attr.flags.low_priority {
+          pixel_color = obj_color;
+        }
+      }
+
       // TODO: Render Window
 
       // TODO: This should check priorities
-      let final_color = bg_color;
 
       // draw pixel
-      self.screen.lazy_dref_mut().set_pixel(self.pos, final_color);
+      self.screen.lazy_dref_mut().set_pixel(self.pos, pixel_color);
     }
 
     // update position
@@ -290,12 +345,25 @@ impl Ppu {
   }
 
   pub fn read(&self, addr: u16) -> GbResult<u8> {
-    Ok(self.vram[addr as usize])
+    if (PPU_START..=PPU_END).contains(&addr) {
+      Ok(self.vram[(addr - PPU_START) as usize])
+    } else if (OAM_START..=OAM_END).contains(&addr) {
+      Ok(self.oam[(addr - OAM_START) as usize])
+    } else {
+      gb_err!(GbErrorType::BadValue)
+    }
   }
 
   pub fn write(&mut self, addr: u16, data: u8) -> GbResult<()> {
     // TODO: ignore writes in certain modes
-    self.vram[addr as usize] = data;
+
+    if (PPU_START..=PPU_END).contains(&addr) {
+      self.vram[(addr - PPU_START) as usize] = data;
+    } else if (OAM_START..=OAM_END).contains(&addr) {
+      self.oam[(addr - OAM_START) as usize] = data;
+    } else {
+      return gb_err!(GbErrorType::BadValue);
+    }
     Ok(())
   }
 
@@ -331,7 +399,7 @@ impl Ppu {
     Ok(())
   }
 
-  /// Get's the tile map entry using the current pixel positioning we are
+  /// Gets the tile map entry using the current pixel positioning we are
   /// rendering
   fn get_tile_map_entry(&self, pos: screen::Pos) -> u8 {
     // a tile map is a table of 32x32 of tile entries
@@ -339,7 +407,6 @@ impl Ppu {
     let y_byte = (pos.y / 8) as u16;
     let x_byte = (pos.x / 8) as u16;
     let map_index = y_byte * 32 + x_byte;
-    // TODO: This seems to not be working :/
     let map_start = if self.lcdc.bg_tile_map_hi {
       TILE_MAP_START_HI
     } else {
@@ -350,7 +417,6 @@ impl Ppu {
 
   /// Get the vram offset for the tile that matches the given `index`
   fn get_tile_data_location(&self, index: u8, scrolled_pos: Pos) -> u16 {
-    // TODO: This seems to not be working :/
     let location_start = if self.lcdc.win_and_bg_data_map_lo {
       TILE_DATA_START_LO + (index as u16 * TILE_DATA_SIZE as u16)
     } else {
@@ -373,6 +439,29 @@ impl Ppu {
     let lo_byte = self.vram[tile_data_location as usize];
     let hi_byte = self.vram[tile_data_location as usize + 1];
     let col_index = ((lo_byte >> bit_x) & 0x1) | (((hi_byte >> bit_x) & 0x1) << 1);
+    let palette_index = (self.bgp >> (col_index * 2)) & 0x3;
+    self.palette[palette_index as usize]
+  }
+
+  /// Given some object attribute data, get the pixel's color.
+  fn get_color_from_attribute(&self, attribute: &ObjectAttribute) -> screen::Color {
+    // TODO: Maybe need scrolled position?
+    let bit_x = 7 - self.pos.x % 8;
+    let mut tile_data_location = attribute.tile_idx as usize * TILE_DATA_SIZE as usize;
+    let fine_y = ((self.pos.y + 16) as u8 - attribute.y_pos) as usize;
+    tile_data_location += 2 * fine_y;
+    let col_index = if fine_y < 8 {
+      // first block
+      let lo_byte = self.vram[tile_data_location];
+      let hi_byte = self.vram[tile_data_location + 1];
+      ((lo_byte >> bit_x) & 0x1) | (((hi_byte >> bit_x) & 0x1) << 1)
+    } else {
+      // second block
+      assert!(self.lcdc.obj_size_large);
+      let lo_byte = self.vram[tile_data_location + 2];
+      let hi_byte = self.vram[tile_data_location + 3];
+      ((lo_byte >> bit_x) & 0x1) | (((hi_byte >> bit_x) & 0x1) << 1)
+    };
     let palette_index = (self.bgp >> (col_index * 2)) & 0x3;
     self.palette[palette_index as usize]
   }
@@ -411,6 +500,11 @@ impl Ppu {
       self.pos.y += 1;
       self.ly = self.pos.y as u8;
 
+      // TODO: maybe this needs to happen during an OAM scan period
+      if self.stat.ppu_mode != PpuMode::VBlank {
+        self.fill_oam_cache();
+      }
+
       // Update stat reg and trigger interrupt on lyc compare
       self.stat.lyc_eq_ly = if self.ly == self.lyc {
         if self.stat.lyc_int_select {
@@ -429,5 +523,43 @@ impl Ppu {
       self.pos.y = 0;
       self.stat.ppu_mode = PpuMode::Rendering;
     }
+  }
+
+  fn fill_oam_cache(&mut self) {
+    // reset cache
+    self.oam_cache.clear();
+
+    let mut obj_idx = 0;
+    let obj_height = if self.lcdc.obj_size_large { 16 } else { 8 };
+    while obj_idx < OAM_SIZE && self.oam_cache.len() < 10 {
+      // y position is index 0 so no need to add offsets
+      let obj_y = self.oam[obj_idx];
+      // object is hidden so no point to add to cache
+      if obj_y <= 160 {
+        if (obj_y..(obj_y + obj_height)).contains(&(self.ly + 16)) {
+          let obj_bytes = [
+            self.oam[obj_idx + 0],
+            self.oam[obj_idx + 1],
+            self.oam[obj_idx + 2],
+            self.oam[obj_idx + 3],
+          ];
+          self.oam_cache.push(ObjectAttribute::from(obj_bytes));
+        }
+      }
+      // obj attribute is 4 bytes
+      obj_idx += 4;
+      assert!(self.oam_cache.len() <= 10);
+    }
+  }
+
+  // Gets first cached object to draw at current position. Returns None if no
+  // object for current position
+  fn get_cached_obj_attr(&self) -> Option<ObjectAttribute> {
+    for attribute in &self.oam_cache {
+      if (attribute.x_pos..(attribute.x_pos + 8)).contains(&(self.pos.x as u8 + 8)) {
+        return Some(attribute.clone());
+      }
+    }
+    None
   }
 }
