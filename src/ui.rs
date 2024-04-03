@@ -10,7 +10,7 @@ use std::path::PathBuf;
 use crate::bus::Bus;
 use crate::cart::Cartridge;
 use crate::dasm::Dasm;
-use crate::ppu::{self, Ppu};
+use crate::ppu::{self, ObjectAttribute, Ppu, OAM_SIZE};
 use crate::timer::Timer;
 use crate::util::LazyDref;
 use crate::{cpu, cpu::Cpu, event::UserEvent, state::GbState};
@@ -23,6 +23,7 @@ pub struct UiState {
   pub show_stat_window: bool,
   pub show_ppu_reg_window: bool,
   pub show_ppu_palette_window: bool,
+  pub show_ppu_oam_window: bool,
   pub show_timer_window: bool,
   pub show_cart_info_window: bool,
 }
@@ -37,6 +38,7 @@ impl UiState {
       show_stat_window: false,
       show_ppu_reg_window: false,
       show_ppu_palette_window: false,
+      show_ppu_oam_window: false,
       show_timer_window: false,
       show_cart_info_window: false,
     }
@@ -110,6 +112,10 @@ impl Ui {
               }
               if ui.button("Palettes").clicked() {
                 ui_state.show_ppu_palette_window = !ui_state.show_ppu_palette_window;
+                ui.close_menu();
+              }
+              if ui.button("OAM").clicked() {
+                ui_state.show_ppu_oam_window = !ui_state.show_ppu_oam_window;
                 ui.close_menu();
               }
             });
@@ -226,6 +232,9 @@ impl Ui {
     }
     if ui_state.show_ppu_palette_window {
       self.ui_ppu_palettes(ctx, &mut gb_state.ppu.borrow_mut());
+    }
+    if ui_state.show_ppu_oam_window {
+      self.ui_ppu_oam(ctx, &mut gb_state.ppu.borrow_mut());
     }
     if ui_state.show_timer_window {
       self.ui_timer(ctx, &mut gb_state.timer.borrow_mut());
@@ -369,6 +378,33 @@ impl Ui {
       if ui.button("BLUE").clicked() {
         ppu.palette = ppu::PALETTE_BLUE;
       }
+    });
+  }
+
+  fn ui_ppu_oam(&self, ctx: &Context, ppu: &mut Ppu) {
+    egui::Window::new("OAM").resizable(true).show(ctx, |ui| {
+      ui.monospace(format!("Cached Objects: {}", ppu.oam_cache.len()));
+      ui.monospace("---------------");
+      egui::ScrollArea::vertical().show(ui, |ui| {
+        for offset in (0..OAM_SIZE).step_by(4) {
+          ui.monospace(format!("Object #{}", offset / 4));
+          ui.monospace("---------------");
+          let obj_bytes = [
+            ppu.oam[offset + 0],
+            ppu.oam[offset + 1],
+            ppu.oam[offset + 2],
+            ppu.oam[offset + 3],
+          ];
+          let attr = ObjectAttribute::from(obj_bytes);
+          ui.monospace(format!("Y Pos: {}", attr.y_pos));
+          ui.monospace(format!("X Pos: {}", attr.x_pos));
+          ui.monospace(format!("Tile IDX: {}", attr.tile_idx));
+          ui.monospace(format!("Low Priority: {}", attr.flags.low_priority));
+          ui.monospace(format!("Flip Y: {}", attr.flags.flip_y));
+          ui.monospace(format!("Flip X: {}", attr.flags.flip_x));
+          ui.monospace("---------------");
+        }
+      });
     });
   }
 

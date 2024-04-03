@@ -23,7 +23,7 @@ const BGP_ADDR: u16 = 0xff47;
 
 // addresses for vram
 const VRAM_SIZE: usize = 8 * 1024;
-const OAM_SIZE: usize = 160;
+pub const OAM_SIZE: usize = 160;
 const TILE_MAP_START_LO: u16 = 0x9800 - bus::PPU_START;
 const TILE_MAP_START_HI: u16 = 0x9C00 - bus::PPU_START;
 const TILE_DATA_START_LO: u16 = 0x8000 - bus::PPU_START;
@@ -180,7 +180,7 @@ impl From<Status> for u8 {
 }
 
 #[derive(Copy, Clone)]
-struct ObjAttrFlags {
+pub struct ObjAttrFlags {
   pub low_priority: bool,
   pub flip_y: bool,
   pub flip_x: bool,
@@ -198,7 +198,7 @@ impl From<u8> for ObjAttrFlags {
 }
 
 #[derive(Copy, Clone)]
-struct ObjectAttribute {
+pub struct ObjectAttribute {
   pub y_pos: u8,
   pub x_pos: u8,
   pub tile_idx: u8,
@@ -234,7 +234,7 @@ pub struct Ppu {
   /// Scroll Y
   pub scy: u8,
   /// OAM Cache (max 10 items)
-  oam_cache: Vec<ObjectAttribute>,
+  pub oam_cache: Vec<ObjectAttribute>,
 
   // palette
   pub palette: [screen::Color; 4],
@@ -323,7 +323,7 @@ impl Ppu {
       // find obj attribute from cache
       if let Some(attr) = self.get_cached_obj_attr() {
         // get object color
-        let obj_color = self.get_color_from_attribute(&attr);
+        let obj_color = self.get_color_from_attribute(&attr, pos);
 
         // check if object should be drawn over background
         if !attr.flags.low_priority {
@@ -444,11 +444,22 @@ impl Ppu {
   }
 
   /// Given some object attribute data, get the pixel's color.
-  fn get_color_from_attribute(&self, attribute: &ObjectAttribute) -> screen::Color {
+  fn get_color_from_attribute(
+    &self,
+    attribute: &ObjectAttribute,
+    _scrolled_pos: Pos,
+  ) -> screen::Color {
     // TODO: Maybe need scrolled position?
-    let bit_x = 7 - self.pos.x % 8;
-    let mut tile_data_location = attribute.tile_idx as usize * TILE_DATA_SIZE as usize;
+    let x_rel = (self.pos.x + 8) - attribute.x_pos as u32;
+    let bit_x = 7 - (x_rel % 8);
+    let tile_size = if self.lcdc.obj_size_large {
+      TILE_DATA_SIZE * 2
+    } else {
+      TILE_DATA_SIZE
+    };
+    let mut tile_data_location = attribute.tile_idx as usize * tile_size as usize;
     let fine_y = ((self.pos.y + 16) as u8 - attribute.y_pos) as usize;
+    // let fine_y = ((scrolled_pos.y + 16) as u8 - attribute.y_pos) as usize;
     tile_data_location += 2 * fine_y;
     let col_index = if fine_y < 8 {
       // first block
@@ -463,6 +474,7 @@ impl Ppu {
       ((lo_byte >> bit_x) & 0x1) | (((hi_byte >> bit_x) & 0x1) << 1)
     };
     let palette_index = (self.bgp >> (col_index * 2)) & 0x3;
+    // TODO: use object palette instead of bg palette
     self.palette[palette_index as usize]
   }
 
