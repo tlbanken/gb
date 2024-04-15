@@ -269,7 +269,7 @@ impl Ui {
   }
 
   fn ui_cart_info(&self, ctx: &Context, cart: &mut Cartridge) {
-    egui::Window::new("CPU Registers")
+    egui::Window::new("Cartridge Info")
       .resizable(false)
       .show(ctx, |ui| {
         ui.monospace(format!("Loaded: {}", cart.loaded));
@@ -402,6 +402,7 @@ impl Ui {
           ui.monospace(format!("Low Priority: {}", attr.flags.low_priority));
           ui.monospace(format!("Flip Y: {}", attr.flags.flip_y));
           ui.monospace(format!("Flip X: {}", attr.flags.flip_x));
+          ui.monospace(format!("Palette Idx: {}", attr.flags.palette_idx));
           ui.monospace("---------------");
         }
       });

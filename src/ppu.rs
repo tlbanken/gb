@@ -11,6 +11,7 @@ use crate::{
 use bit_field::BitField;
 use log::{trace, warn};
 use std::cell::RefCell;
+use std::mem::swap;
 use std::rc::Rc;
 
 const LCDC_ADDR: u16 = 0xff40;
@@ -20,6 +21,8 @@ const SCX_ADDR: u16 = 0xff43;
 const LY_ADDR: u16 = 0xff44;
 const LYC_ADDR: u16 = 0xff45;
 const BGP_ADDR: u16 = 0xff47;
+const OBP0_ADDR: u16 = 0xff48;
+const OBP1_ADDR: u16 = 0xff49;
 
 // addresses for vram
 const VRAM_SIZE: usize = 8 * 1024;
@@ -184,6 +187,7 @@ pub struct ObjAttrFlags {
   pub low_priority: bool,
   pub flip_y: bool,
   pub flip_x: bool,
+  pub palette_idx: u8,
   // CGB attributes not included
 }
 
@@ -193,6 +197,7 @@ impl From<u8> for ObjAttrFlags {
       low_priority: value.get_bit(7),
       flip_y: value.get_bit(6),
       flip_x: value.get_bit(5),
+      palette_idx: value.get_bit(4) as u8,
     }
   }
 }
@@ -235,13 +240,11 @@ pub struct Ppu {
   pub scy: u8,
   /// OAM Cache (max 10 items)
   pub oam_cache: Vec<ObjectAttribute>,
+  /// object palette mapping
+  pub obp: [u8; 2],
 
   // palette
   pub palette: [screen::Color; 4],
-
-  // timing helpers
-  vblank_left: u32,
-  hblank_left: u32,
 
   // Screen to draw to
   screen: Option<Rc<RefCell<Screen>>>,
@@ -267,11 +270,10 @@ impl Ppu {
       ly: 0,
       lyc: 0,
       bgp: 0,
+      obp: [0; 2],
       scx: 0,
       scy: 0,
       palette: PALETTE_GRAY,
-      vblank_left: 0,
-      hblank_left: 0,
       screen: None,
       ic: None,
       pos: Pos { x: 0, y: 0 },
@@ -320,14 +322,15 @@ impl Ppu {
       let mut pixel_color = self.get_color_from_tile_data(tile_data);
 
       // TODO: Render Objects
-      // find obj attribute from cache
-      if let Some(attr) = self.get_cached_obj_attr() {
+      // find obj attributes from cache
+      let objs = self.get_available_cached_objs();
+      for attr in objs {
         // get object color
         let obj_color = self.get_color_from_attribute(&attr, pos);
 
         // check if object should be drawn over background
-        if !attr.flags.low_priority {
-          pixel_color = obj_color;
+        if obj_color.is_some() && !attr.flags.low_priority {
+          pixel_color = obj_color.unwrap();
         }
       }
 
@@ -376,6 +379,9 @@ impl Ppu {
       BGP_ADDR => Ok(self.bgp),
       SCY_ADDR => Ok(self.scy),
       SCX_ADDR => Ok(self.scx),
+      BGP_ADDR => Ok(self.bgp),
+      OBP0_ADDR => Ok(self.obp[0]),
+      OBP1_ADDR => Ok(self.obp[1]),
       _ => {
         warn!("Read from unsupported IO Reg: ${:04X}. Returning 0", addr);
         Ok(0)
@@ -391,6 +397,9 @@ impl Ppu {
       BGP_ADDR => self.bgp = data,
       SCY_ADDR => self.scy = data,
       SCX_ADDR => self.scx = data,
+      BGP_ADDR => self.bgp = data,
+      OBP0_ADDR => self.obp[0] = data,
+      OBP1_ADDR => self.obp[1] = data,
       _ => warn!(
         "Write to unsupported IO Reg: [{:02X}] -> ${:04X}",
         data, addr
@@ -448,7 +457,7 @@ impl Ppu {
     &self,
     attribute: &ObjectAttribute,
     _scrolled_pos: Pos,
-  ) -> screen::Color {
+  ) -> Option<screen::Color> {
     // TODO: Maybe need scrolled position?
     let x_rel = (self.pos.x + 8) - attribute.x_pos as u32;
     let bit_x = 7 - (x_rel % 8);
@@ -473,9 +482,13 @@ impl Ppu {
       let hi_byte = self.vram[tile_data_location + 3];
       ((lo_byte >> bit_x) & 0x1) | (((hi_byte >> bit_x) & 0x1) << 1)
     };
-    let palette_index = (self.bgp >> (col_index * 2)) & 0x3;
-    // TODO: use object palette instead of bg palette
-    self.palette[palette_index as usize]
+    let palette_index = (self.obp[attribute.flags.palette_idx as usize] >> (col_index * 2)) & 0x3;
+    // color index of 0 is transparent
+    if col_index == 0 {
+      None
+    } else {
+      Some(self.palette[palette_index as usize])
+    }
   }
 
   fn pos_with_scroll(&self) -> screen::Pos {
@@ -564,14 +577,28 @@ impl Ppu {
     }
   }
 
-  // Gets first cached object to draw at current position. Returns None if no
-  // object for current position
-  fn get_cached_obj_attr(&self) -> Option<ObjectAttribute> {
+  // Gets all available cached objs which could be drawn at this x coord
+  fn get_available_cached_objs(&self) -> Vec<ObjectAttribute> {
+    let mut objs: Vec<ObjectAttribute> = Vec::new();
     for attribute in &self.oam_cache {
       if (attribute.x_pos..(attribute.x_pos + 8)).contains(&(self.pos.x as u8 + 8)) {
-        return Some(attribute.clone());
+        objs.push(attribute.clone());
       }
     }
-    None
+    Self::sort_obj_attributes_by_rev_render_order(&mut objs);
+    objs
+  }
+
+  // Sort the object attrs by largest x coord. Larger X coord are lower priority
+  // so iterating over in order will allow to overwrite the color.
+  fn sort_obj_attributes_by_rev_render_order(objs: &mut Vec<ObjectAttribute>) {
+    // simple insertion sort since objs will be 10 or less in size
+    for min_start in 0..objs.len() {
+      for i in min_start..objs.len() {
+        if objs[i].x_pos < objs[min_start].x_pos {
+          objs.swap(i, min_start);
+        }
+      }
+    }
   }
 }
