@@ -140,8 +140,8 @@ impl Bus {
       IE_ADDR | IF_ADDR => self.ic.lazy_dref().read(addr),
       // unsupported
       _ => {
-        warn!("Unsupported read8 address: ${:04X}. Returning 0", addr);
-        Ok(0)
+        warn!("Unsupported read8 address: ${:04X}. Returning 0xff", addr);
+        Ok(0xff)
       }
     }
   }
@@ -191,8 +191,8 @@ impl Bus {
 
       // unsupported
       _ => {
-        warn!("Unsupported read16 address: ${:04X}. Returning 0", addr);
-        0
+        warn!("Unsupported read16 address: ${:04X}. Returning 0xff", addr);
+        0xff
       }
     })
   }

@@ -33,6 +33,12 @@ const TILE_DATA_START_LO: u16 = 0x8000 - bus::PPU_START;
 const TILE_DATA_START_HI: u16 = 0x9000 - bus::PPU_START;
 const TILE_DATA_SIZE: u8 = 16;
 
+// Important Pixel Positions
+const HBLANK_START: u32 = 160;
+const HBLANK_END: u32 = 360; // TODO: what is the correct value here?
+const VBLANK_START: u32 = 144;
+const VBLANK_END: u32 = 154 + 1;
+
 // Color Palettes
 pub const PALETTE_GRAY: [screen::Color; 4] = [
   screen::Color::new(1.0, 1.0, 1.0), // white
@@ -307,26 +313,28 @@ impl Ppu {
   fn step_one(&mut self) -> GbResult<()> {
     // only draw when we need to
     if self.stat.ppu_mode == PpuMode::Rendering {
+      assert!(self.pos.y < VBLANK_START);
+      assert!(self.pos.x < HBLANK_START);
       // our pixel coordinate needs to be adjusted for scrolling
-      let pos = self.pos_with_scroll();
-      trace!("Adjusted Pos: {:?}", pos);
+      let scrolled_pos = self.pos_with_scroll();
+      trace!("Adjusted Pos: {:?}", scrolled_pos);
 
       // Render background
       // figure out the tile map entry we are on in the tile map table
       // use the tile map entry to read the tile data in the tile data table
       // use the tile data entry to figure out the color of the pixel
-      let tile_data_index = self.get_tile_map_entry(pos);
+      let tile_data_index = self.get_tile_map_entry(scrolled_pos);
       // next we get the tile data info
-      let tile_data = self.get_tile_data_location(tile_data_index, pos);
+      let tile_data = self.get_tile_data_location(tile_data_index, scrolled_pos);
       // now transform that tile data into a color
-      let mut pixel_color = self.get_color_from_tile_data(tile_data);
+      let mut pixel_color = self.get_color_from_tile_data(tile_data, scrolled_pos);
 
       // TODO: Render Objects
       // find obj attributes from cache
       let objs = self.get_available_cached_objs();
       for attr in objs {
         // get object color
-        let obj_color = self.get_color_from_attribute(&attr, pos);
+        let obj_color = self.get_color_from_attribute(&attr, scrolled_pos);
 
         // check if object should be drawn over background
         if obj_color.is_some() && !attr.flags.low_priority {
@@ -443,8 +451,9 @@ impl Ppu {
   }
 
   /// Given a tile, construct the tile
-  fn get_color_from_tile_data(&self, tile_data_location: u16) -> screen::Color {
-    let bit_x = 7 - self.pos.x % 8;
+  fn get_color_from_tile_data(&self, tile_data_location: u16, scrolled_pos: Pos) -> screen::Color {
+    // let bit_x = 7 - self.pos.x % 8;
+    let bit_x = 7 - scrolled_pos.x % 8;
     let lo_byte = self.vram[tile_data_location as usize];
     let hi_byte = self.vram[tile_data_location as usize + 1];
     let col_index = ((lo_byte >> bit_x) & 0x1) | (((hi_byte >> bit_x) & 0x1) << 1);
@@ -458,7 +467,7 @@ impl Ppu {
     attribute: &ObjectAttribute,
     _scrolled_pos: Pos,
   ) -> Option<screen::Color> {
-    // TODO: Maybe need scrolled position?
+    assert!(!attribute.flags.flip_y || !attribute.flags.flip_x);
     let x_rel = (self.pos.x + 8) - attribute.x_pos as u32;
     let bit_x = 7 - (x_rel % 8);
     let tile_size = if self.lcdc.obj_size_large {
@@ -468,7 +477,6 @@ impl Ppu {
     };
     let mut tile_data_location = attribute.tile_idx as usize * tile_size as usize;
     let fine_y = ((self.pos.y + 16) as u8 - attribute.y_pos) as usize;
-    // let fine_y = ((scrolled_pos.y + 16) as u8 - attribute.y_pos) as usize;
     tile_data_location += 2 * fine_y;
     let col_index = if fine_y < 8 {
       // first block
@@ -500,11 +508,6 @@ impl Ppu {
   }
 
   fn update_pos(&mut self) {
-    const HBLANK_START: u32 = 160;
-    const HBLANK_END: u32 = 360; // TODO what is the correct value here?
-    const VBLANK_START: u32 = 144;
-    const VBLANK_END: u32 = 154 + 1;
-
     // always advance x
     self.pos.x += 1;
 
@@ -523,6 +526,14 @@ impl Ppu {
     if self.pos.x == 0 {
       // new row
       self.pos.y += 1;
+
+      if self.pos.y == VBLANK_START {
+        self.stat.ppu_mode = PpuMode::VBlank;
+        self.ic.lazy_dref_mut().raise(Interrupt::Vblank);
+      } else if self.pos.y == VBLANK_END {
+        self.pos.y = 0;
+        self.stat.ppu_mode = PpuMode::Rendering;
+      }
       self.ly = self.pos.y as u8;
 
       // TODO: maybe this needs to happen during an OAM scan period
@@ -540,14 +551,6 @@ impl Ppu {
         false
       };
     }
-    if self.pos.y == VBLANK_START {
-      self.stat.ppu_mode = PpuMode::VBlank;
-      self.ic.lazy_dref_mut().raise(Interrupt::Vblank);
-    }
-    if self.pos.y == VBLANK_END {
-      self.pos.y = 0;
-      self.stat.ppu_mode = PpuMode::Rendering;
-    }
   }
 
   fn fill_oam_cache(&mut self) {
@@ -560,7 +563,8 @@ impl Ppu {
       // y position is index 0 so no need to add offsets
       let obj_y = self.oam[obj_idx];
       // object is hidden so no point to add to cache
-      if obj_y <= 160 {
+      if obj_y < 160 {
+        // obj y is offset by 16 from top of screen
         if (obj_y..(obj_y + obj_height)).contains(&(self.ly + 16)) {
           let obj_bytes = [
             self.oam[obj_idx + 0],

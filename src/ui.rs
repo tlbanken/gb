@@ -134,8 +134,7 @@ impl Ui {
           });
 
           if ui.button("Load Cartridge").clicked() {
-            let mut start_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-            start_dir.push("test-roms/");
+            let start_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
             let file_option = FileDialog::new().set_directory(start_dir).pick_file();
             if let Some(file) = file_option {
               // reset to load the cartridge

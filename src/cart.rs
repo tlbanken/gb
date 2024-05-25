@@ -89,7 +89,10 @@ impl Cartridge {
     match self.header.mapper {
       MapperType::None => self.mbc = Some(Box::new(NoMbc::new(rom, self.header.ram_banks))),
       MapperType::Mbc1 => self.mbc = Some(Box::new(Mbc1::new(rom, self.header.ram_banks))),
-      _ => return gb_err!(GbErrorType::Unsupported),
+      _ => {
+        error!("Unsupported Mapper!");
+        return gb_err!(GbErrorType::Unsupported);
+      }
     }
     Ok(())
   }
