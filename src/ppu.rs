@@ -11,7 +11,6 @@ use crate::{
 use bit_field::BitField;
 use log::{trace, warn};
 use std::cell::RefCell;
-use std::mem::swap;
 use std::rc::Rc;
 
 const LCDC_ADDR: u16 = 0xff40;
@@ -23,6 +22,8 @@ const LYC_ADDR: u16 = 0xff45;
 const BGP_ADDR: u16 = 0xff47;
 const OBP0_ADDR: u16 = 0xff48;
 const OBP1_ADDR: u16 = 0xff49;
+const WY_ADDR: u16 = 0xff4a;
+const WX_ADDR: u16 = 0xff4b;
 
 // addresses for vram
 const VRAM_SIZE: usize = 8 * 1024;
@@ -63,7 +64,7 @@ pub const PALETTE_BLUE: [screen::Color; 4] = [
 ];
 
 #[derive(PartialEq, Copy, Clone)]
-enum PpuMode {
+pub enum PpuMode {
   HBlank = 0,
   VBlank = 1,
   OamScan = 2,
@@ -134,7 +135,7 @@ impl From<LcdControl> for u8 {
 }
 
 #[derive(Copy, Clone)]
-struct Status {
+pub struct Status {
   #[rustfmt::skip]
   /// Bit 0-1: PPU mode (Read-only)
   ///
@@ -249,6 +250,11 @@ pub struct Ppu {
   /// object palette mapping
   pub obp: [u8; 2],
 
+  // window position
+  pub wy: u8,
+  pub wx: u8,
+  pub wstart: bool,
+
   // palette
   pub palette: [screen::Color; 4],
 
@@ -279,6 +285,9 @@ impl Ppu {
       obp: [0; 2],
       scx: 0,
       scy: 0,
+      wy: 0,
+      wx: 0,
+      wstart: false,
       palette: PALETTE_GRAY,
       screen: None,
       ic: None,
@@ -319,17 +328,28 @@ impl Ppu {
       let scrolled_pos = self.pos_with_scroll();
       trace!("Adjusted Pos: {:?}", scrolled_pos);
 
+      // position used in bg depends on if we are drawing the window or not
+      let bg_or_win_pos = if self.lcdc.win_enabled && self.wstart && self.pos.x as u8 + 7 >= self.wx
+      {
+        // TODO: remove panic once game that uses window is found
+        panic!("This games uses the window!");
+        let y = self.wy as u32 - self.pos.y;
+        let x = self.wx as u32 - (self.pos.x + 7);
+        Pos { x, y }
+      } else {
+        scrolled_pos
+      };
+
       // Render background
       // figure out the tile map entry we are on in the tile map table
       // use the tile map entry to read the tile data in the tile data table
       // use the tile data entry to figure out the color of the pixel
-      let tile_data_index = self.get_tile_map_entry(scrolled_pos);
+      let tile_data_index = self.get_tile_map_entry(bg_or_win_pos);
       // next we get the tile data info
-      let tile_data = self.get_tile_data_location(tile_data_index, scrolled_pos);
+      let tile_data = self.get_tile_data_location(tile_data_index, bg_or_win_pos);
       // now transform that tile data into a color
-      let mut pixel_color = self.get_color_from_tile_data(tile_data, scrolled_pos);
+      let mut pixel_color = self.get_color_from_tile_data(tile_data, bg_or_win_pos);
 
-      // TODO: Render Objects
       // find obj attributes from cache
       let objs = self.get_available_cached_objs();
       for attr in objs {
@@ -341,10 +361,6 @@ impl Ppu {
           pixel_color = obj_color.unwrap();
         }
       }
-
-      // TODO: Render Window
-
-      // TODO: This should check priorities
 
       // draw pixel
       self.screen.lazy_dref_mut().set_pixel(self.pos, pixel_color);
@@ -387,9 +403,10 @@ impl Ppu {
       BGP_ADDR => Ok(self.bgp),
       SCY_ADDR => Ok(self.scy),
       SCX_ADDR => Ok(self.scx),
-      BGP_ADDR => Ok(self.bgp),
       OBP0_ADDR => Ok(self.obp[0]),
       OBP1_ADDR => Ok(self.obp[1]),
+      WY_ADDR => Ok(self.wy),
+      WX_ADDR => Ok(self.wx),
       _ => {
         warn!("Read from unsupported IO Reg: ${:04X}. Returning 0", addr);
         Ok(0)
@@ -405,9 +422,10 @@ impl Ppu {
       BGP_ADDR => self.bgp = data,
       SCY_ADDR => self.scy = data,
       SCX_ADDR => self.scx = data,
-      BGP_ADDR => self.bgp = data,
       OBP0_ADDR => self.obp[0] = data,
       OBP1_ADDR => self.obp[1] = data,
+      WY_ADDR => self.wy = data,
+      WX_ADDR => self.wx = data,
       _ => warn!(
         "Write to unsupported IO Reg: [{:02X}] -> ${:04X}",
         data, addr
@@ -439,7 +457,7 @@ impl Ppu {
     } else {
       // indexing using this mode requires using a signed index since we can index
       // backwards
-      let mut signed_index = index as i8;
+      let signed_index = index as i8;
       let signed_start = TILE_DATA_START_HI as i32 + (signed_index as i32 * TILE_DATA_SIZE as i32);
       assert!(signed_start >= 0);
       signed_start as u16
@@ -531,6 +549,8 @@ impl Ppu {
         self.stat.ppu_mode = PpuMode::VBlank;
         self.ic.lazy_dref_mut().raise(Interrupt::Vblank);
       } else if self.pos.y == VBLANK_END {
+        // new frame
+        self.wstart = false;
         self.pos.y = 0;
         self.stat.ppu_mode = PpuMode::Rendering;
       }
@@ -550,6 +570,10 @@ impl Ppu {
       } else {
         false
       };
+    }
+
+    if self.wy == self.ly {
+      self.wstart = true;
     }
   }
 
