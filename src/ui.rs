@@ -26,6 +26,7 @@ pub struct UiState {
   pub show_ppu_oam_window: bool,
   pub show_timer_window: bool,
   pub show_cart_info_window: bool,
+  pub show_joypad_window: bool,
 }
 
 impl UiState {
@@ -41,6 +42,7 @@ impl UiState {
       show_ppu_oam_window: false,
       show_timer_window: false,
       show_cart_info_window: false,
+      show_joypad_window: false,
     }
   }
 
@@ -129,6 +131,10 @@ impl Ui {
             }
             if ui.button("Cartridge Info").clicked() {
               ui_state.show_cart_info_window = !ui_state.show_cart_info_window;
+              ui.close_menu();
+            }
+            if ui.button("Joypad").clicked() {
+              ui_state.show_joypad_window = !ui_state.show_joypad_window;
               ui.close_menu();
             }
           });
@@ -241,6 +247,9 @@ impl Ui {
     if ui_state.show_cart_info_window {
       self.ui_cart_info(ctx, &mut gb_state.cart.borrow_mut());
     }
+    if ui_state.show_joypad_window {
+      self.ui_joypad(ctx, gb_state);
+    }
   }
 
   fn ui_stat(&self, ctx: &Context, fps: f32, gb_state: &mut GbState) {
@@ -265,6 +274,21 @@ impl Ui {
 
     // reset style
     Self::set_default_style(ctx);
+  }
+
+  fn ui_joypad(&self, ctx: &Context, gb_state: &mut GbState) {
+    egui::Window::new("Joypad").show(ctx, |ui| {
+      ui.monospace(format!(
+        "Buttons: {:02x}, {}",
+        gb_state.joypad.borrow().buttons_state,
+        gb_state.joypad.borrow().button_mode
+      ));
+      ui.monospace(format!(
+        "DPad: {:02x}, {}",
+        gb_state.joypad.borrow().dpad_state,
+        gb_state.joypad.borrow().dpad_mode
+      ));
+    });
   }
 
   fn ui_cart_info(&self, ctx: &Context, cart: &mut Cartridge) {

@@ -11,6 +11,7 @@ use crate::{
   cart::Cartridge,
   err::{GbError, GbErrorType, GbResult},
   gb_err,
+  joypad::Joypad,
   ppu::Ppu,
   ram::Ram,
   util::LazyDref,
@@ -49,6 +50,7 @@ pub struct Bus {
   ppu: Option<Rc<RefCell<Ppu>>>,
   ic: Option<Rc<RefCell<Interrupts>>>,
   timer: Option<Rc<RefCell<Timer>>>,
+  joypad: Option<Rc<RefCell<Joypad>>>,
 }
 
 impl Bus {
@@ -60,6 +62,7 @@ impl Bus {
       ppu: None,
       ic: None,
       timer: None,
+      joypad: None,
     }
   }
 
@@ -95,7 +98,7 @@ impl Bus {
 
   /// Adds a reference to the gpu to the bus
   pub fn connect_ppu(&mut self, ppu: Rc<RefCell<Ppu>>) -> GbResult<()> {
-    debug!("Connecting gpu to the bus");
+    debug!("Connecting ppu to the bus");
     match self.ppu {
       None => self.ppu = Some(ppu),
       Some(_) => return gb_err!(GbErrorType::AlreadyInitialized),
@@ -105,7 +108,7 @@ impl Bus {
 
   /// Adds a reference to the interrupt controller to the bus
   pub fn connect_ic(&mut self, ic: Rc<RefCell<Interrupts>>) -> GbResult<()> {
-    debug!("Connecting gpu to the bus");
+    debug!("Connecting ic to the bus");
     match self.ic {
       None => self.ic = Some(ic),
       Some(_) => return gb_err!(GbErrorType::AlreadyInitialized),
@@ -115,9 +118,19 @@ impl Bus {
 
   /// Adds a reference to the timer to the bus
   pub fn connect_timer(&mut self, timer: Rc<RefCell<Timer>>) -> GbResult<()> {
-    debug!("Connecting gpu to the bus");
+    debug!("Connecting timer to the bus");
     match self.timer {
       None => self.timer = Some(timer),
+      Some(_) => return gb_err!(GbErrorType::AlreadyInitialized),
+    }
+    Ok(())
+  }
+
+  /// Adds a reference to the joypad to the bus
+  pub fn connect_joypad(&mut self, joypad: Rc<RefCell<Joypad>>) -> GbResult<()> {
+    debug!("Connecting joypad to the bus");
+    match self.joypad {
+      None => self.joypad = Some(joypad),
       Some(_) => return gb_err!(GbErrorType::AlreadyInitialized),
     }
     Ok(())
@@ -138,6 +151,7 @@ impl Bus {
       HRAM_START..=HRAM_END => self.hram.lazy_dref().read(addr - HRAM_START),
       TIMER_START..=TIMER_END => self.timer.lazy_dref().read(addr),
       IE_ADDR | IF_ADDR => self.ic.lazy_dref().read(addr),
+      JOYPAD_EXACT => self.joypad.lazy_dref().read(addr),
       // unsupported
       _ => {
         warn!("Unsupported read8 address: ${:04X}. Returning 0xff", addr);
@@ -228,6 +242,7 @@ impl Bus {
       HRAM_START..=HRAM_END => self.hram.lazy_dref_mut().write(addr - HRAM_START, val),
       TIMER_START..=TIMER_END => self.timer.lazy_dref_mut().write(addr, val),
       IE_ADDR | IF_ADDR => self.ic.lazy_dref_mut().write(addr, val),
+      JOYPAD_EXACT => self.joypad.lazy_dref_mut().write(addr, val),
       // unsupported
       _ => {
         warn!("Unsupported write8 address: [{:02X}] -> ${:04X}", val, addr);

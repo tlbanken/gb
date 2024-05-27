@@ -10,6 +10,7 @@ mod err;
 mod event;
 mod gb;
 mod int;
+mod joypad;
 mod logger;
 mod ppu;
 mod ram;

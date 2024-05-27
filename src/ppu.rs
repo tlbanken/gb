@@ -331,8 +331,6 @@ impl Ppu {
       // position used in bg depends on if we are drawing the window or not
       let bg_or_win_pos = if self.lcdc.win_enabled && self.wstart && self.pos.x as u8 + 7 >= self.wx
       {
-        // TODO: remove panic once game that uses window is found
-        panic!("This games uses the window!");
         let y = self.wy as u32 - self.pos.y;
         let x = self.wx as u32 - (self.pos.x + 7);
         Pos { x, y }

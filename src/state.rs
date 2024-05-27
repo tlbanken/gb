@@ -6,7 +6,9 @@ use crate::int::Interrupts;
 use crate::screen::Screen;
 use crate::tick_counter::TickCounter;
 use crate::timer::Timer;
-use crate::{bus::Bus, cart::Cartridge, cpu, cpu::Cpu, err::GbResult, ppu::Ppu, ram::Ram};
+use crate::{
+  bus::Bus, cart::Cartridge, cpu, cpu::Cpu, err::GbResult, joypad::Joypad, ppu::Ppu, ram::Ram,
+};
 
 /// Alpha used when calculating the rolling average
 const CLOCK_RATE_ALPHA: f32 = 0.999;
@@ -37,6 +39,7 @@ pub struct GbState {
   pub ppu: Rc<RefCell<Ppu>>,
   pub ic: Rc<RefCell<Interrupts>>,
   pub timer: Rc<RefCell<Timer>>,
+  pub joypad: Rc<RefCell<Joypad>>,
   pub flow: EmuFlow,
   pub cycles: TickCounter,
   pub clock_rate: f32,
@@ -54,6 +57,7 @@ impl GbState {
       ppu: Rc::new(RefCell::new(Ppu::new())),
       ic: Rc::new(RefCell::new(Interrupts::new())),
       timer: Rc::new(RefCell::new(Timer::new())),
+      joypad: Rc::new(RefCell::new(Joypad::new())),
       flow,
       cycles: TickCounter::new(CLOCK_RATE_ALPHA),
       clock_rate: 0.0,
@@ -76,6 +80,7 @@ impl GbState {
     self.bus.borrow_mut().connect_ppu(self.ppu.clone())?;
     self.bus.borrow_mut().connect_ic(self.ic.clone())?;
     self.bus.borrow_mut().connect_timer(self.timer.clone())?;
+    self.bus.borrow_mut().connect_joypad(self.joypad.clone())?;
 
     // connect modules to bus
     self.cpu.borrow_mut().connect_bus(self.bus.clone())?;
