@@ -266,7 +266,7 @@ impl Ui {
         let clock_rate_mhz = gb_state.clock_rate / 1_000_000.0;
         let percent = (clock_rate_mhz / cpu::CLOCK_RATE_MHZ) * 100.0;
         ui.monospace(format!(
-          "Clock Speed: {:01.04} MHz ({:.0}%)",
+          "Clock Speed: {:01.04} MHz ({:3.0}%)",
           clock_rate_mhz, percent
         ));
         ui.monospace(format!("UI FPS: {:.0}", fps));
@@ -437,6 +437,20 @@ impl Ui {
       ui.monospace(format!("LY: {}", ppu.ly));
       ui.monospace(format!("SCX: {}", ppu.scx));
       ui.monospace(format!("SCY: {}", ppu.scy));
+      ui.monospace(format!("LCDC.BG_WIN_PRIORITY: {}", ppu.lcdc.bg_win_enable));
+      ui.monospace(format!("LCDC.OBJ_ENABLE: {}", ppu.lcdc.obj_enabled));
+      ui.monospace(format!("LCDC.LARGE_OBJ_SIZE: {}", ppu.lcdc.obj_size_large));
+      ui.monospace(format!("LCDC.BG_TILE_HI: {}", ppu.lcdc.bg_tile_map_hi));
+      ui.monospace(format!(
+        "LCDC.BG_WIN_TILE_LO: {}",
+        ppu.lcdc.win_and_bg_data_map_lo
+      ));
+      ui.monospace(format!("LCDC.WIN_ENABLE: {}", ppu.lcdc.win_enabled));
+      ui.monospace(format!(
+        "LCDC.WIN_TILE_MAP_HI: {}",
+        ppu.lcdc.win_tile_map_hi
+      ));
+      ui.monospace(format!("LCDC.LCD_ENABLE: {}", ppu.lcdc.ppu_enabled));
     });
   }
 

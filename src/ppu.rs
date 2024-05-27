@@ -329,10 +329,10 @@ impl Ppu {
       trace!("Adjusted Pos: {:?}", scrolled_pos);
 
       // position used in bg depends on if we are drawing the window or not
-      let bg_or_win_pos = if self.lcdc.win_enabled && self.wstart && self.pos.x as u8 + 7 >= self.wx
-      {
-        let y = self.wy as u32 - self.pos.y;
-        let x = self.wx as u32 - (self.pos.x + 7);
+      let draw_win = self.lcdc.win_enabled && self.wstart && self.pos.x as u8 + 7 >= self.wx;
+      let pos = if draw_win {
+        let y = self.pos.y - self.wy as u32;
+        let x = (self.pos.x + 7) - self.wx as u32;
         Pos { x, y }
       } else {
         scrolled_pos
@@ -342,17 +342,21 @@ impl Ppu {
       // figure out the tile map entry we are on in the tile map table
       // use the tile map entry to read the tile data in the tile data table
       // use the tile data entry to figure out the color of the pixel
-      let tile_data_index = self.get_tile_map_entry(bg_or_win_pos);
+      let tile_data_index = if draw_win {
+        self.get_win_tile_map_entry(pos)
+      } else {
+        self.get_bg_tile_map_entry(pos)
+      };
       // next we get the tile data info
-      let tile_data = self.get_tile_data_location(tile_data_index, bg_or_win_pos);
+      let tile_data = self.get_tile_data_location(tile_data_index, pos);
       // now transform that tile data into a color
-      let mut pixel_color = self.get_color_from_tile_data(tile_data, bg_or_win_pos);
+      let mut pixel_color = self.get_color_from_tile_data(tile_data, pos);
 
       // find obj attributes from cache
       let objs = self.get_available_cached_objs();
       for attr in objs {
         // get object color
-        let obj_color = self.get_color_from_attribute(&attr, scrolled_pos);
+        let obj_color = self.get_color_from_attribute(&attr);
 
         // check if object should be drawn over background
         if obj_color.is_some() && !attr.flags.low_priority {
@@ -434,13 +438,29 @@ impl Ppu {
 
   /// Gets the tile map entry using the current pixel positioning we are
   /// rendering
-  fn get_tile_map_entry(&self, pos: screen::Pos) -> u8 {
+  fn get_bg_tile_map_entry(&self, pos: screen::Pos) -> u8 {
     // a tile map is a table of 32x32 of tile entries
     // a tile entry is a 1 byte index into the tile data table
     let y_byte = (pos.y / 8) as u16;
     let x_byte = (pos.x / 8) as u16;
     let map_index = y_byte * 32 + x_byte;
     let map_start = if self.lcdc.bg_tile_map_hi {
+      TILE_MAP_START_HI
+    } else {
+      TILE_MAP_START_LO
+    };
+    self.vram[(map_start + map_index) as usize]
+  }
+
+  /// Gets the tile map entry using the current pixel positioning we are
+  /// rendering
+  fn get_win_tile_map_entry(&self, pos: screen::Pos) -> u8 {
+    // a tile map is a table of 32x32 of tile entries
+    // a tile entry is a 1 byte index into the tile data table
+    let y_byte = (pos.y / 8) as u16;
+    let x_byte = (pos.x / 8) as u16;
+    let map_index = y_byte * 32 + x_byte;
+    let map_start = if self.lcdc.win_tile_map_hi {
       TILE_MAP_START_HI
     } else {
       TILE_MAP_START_LO
@@ -478,20 +498,17 @@ impl Ppu {
   }
 
   /// Given some object attribute data, get the pixel's color.
-  fn get_color_from_attribute(
-    &self,
-    attribute: &ObjectAttribute,
-    _scrolled_pos: Pos,
-  ) -> Option<screen::Color> {
-    assert!(!attribute.flags.flip_y || !attribute.flags.flip_x);
+  fn get_color_from_attribute(&self, attribute: &ObjectAttribute) -> Option<screen::Color> {
+    assert!(!attribute.flags.flip_y);
+    // let x_rel = (scrolled_pos.x + 8) - attribute.x_pos as u32;
     let x_rel = (self.pos.x + 8) - attribute.x_pos as u32;
-    let bit_x = 7 - (x_rel % 8);
-    let tile_size = if self.lcdc.obj_size_large {
-      TILE_DATA_SIZE * 2
+    let bit_x = if attribute.flags.flip_x {
+      x_rel % 8
     } else {
-      TILE_DATA_SIZE
+      7 - (x_rel % 8)
     };
-    let mut tile_data_location = attribute.tile_idx as usize * tile_size as usize;
+    let mut tile_data_location = attribute.tile_idx as usize * TILE_DATA_SIZE as usize;
+    // let fine_y = ((scrolled_pos.y + 16) as u8 - attribute.y_pos) as usize;
     let fine_y = ((self.pos.y + 16) as u8 - attribute.y_pos) as usize;
     tile_data_location += 2 * fine_y;
     let col_index = if fine_y < 8 {
