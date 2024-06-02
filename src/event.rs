@@ -9,4 +9,5 @@ pub enum UserEvent {
   EmuStep,
   EmuPlay,
   EmuReset(Option<PathBuf>),
+  RequestRender,
 }

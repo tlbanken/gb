@@ -44,6 +44,7 @@ const TARGET_FRAME_TIME_MS: u128 = 1000 / 60;
 pub struct Gameboy {
   is_init: bool,
   state: GbState,
+  last_render: Instant,
   // video: Option<Video>,
 }
 
@@ -56,7 +57,7 @@ impl Gameboy {
     Gameboy {
       state,
       is_init: false,
-      // video: None,
+      last_render: Instant::now(),
     }
   }
 
@@ -82,12 +83,11 @@ impl Gameboy {
 
     // setup render backend
     let mut video = pollster::block_on(Video::new(window, ui));
-    // self.video = Some(pollster::block_on(Video::new(window, ui)));
 
     // initialize the gb state
-    self.state.init(video.screen())?;
+    self.state.init(video.screen(), event_loop.create_proxy())?;
 
-    let mut last_render = Instant::now();
+    self.last_render = Instant::now();
     // run as fast as possible
     event_loop.run(move |event, _, control_flow| {
       // run as fast as possible
@@ -98,18 +98,12 @@ impl Gameboy {
       // system step
       self.state.step().unwrap();
 
-      // TODO: find better pace for rendering
       // draw the window at least every 1/60 of a second
       let now = Instant::now();
-      let dtime = now - last_render;
-      let should_redraw = if dtime.as_millis() > TARGET_FRAME_TIME_MS {
-        last_render = now;
-        true
-      } else {
-        false
-      };
-
+      let dtime = now - self.last_render;
+      let should_redraw = dtime.as_millis() > TARGET_FRAME_TIME_MS;
       if should_redraw {
+        self.last_render = now;
         video.render(&mut self.state).unwrap();
       }
     });
@@ -145,13 +139,18 @@ impl Gameboy {
             .window()
             .set_inner_size(PhysicalSize::new(w as f32, h as f32));
         }
+        UserEvent::RequestRender => {
+          self.last_render = Instant::now();
+          video.render(&mut self.state).unwrap()
+        }
         UserEvent::EmuPause => self.state.flow.paused = true,
         UserEvent::EmuPlay => self.state.flow.paused = false,
         UserEvent::EmuStep => self.state.flow.step = true,
         UserEvent::EmuReset(path) => {
           let flow = self.state.flow;
+          let elp = self.state.event_loop_proxy.clone();
           self.state = GbState::new(flow);
-          self.state.init(video.screen())?;
+          self.state.init(video.screen(), elp.unwrap())?;
           if let Some(path_unwrapped) = path {
             self.state.cart.borrow_mut().load(path_unwrapped)?;
           }

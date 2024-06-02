@@ -1,3 +1,4 @@
+use log::{error, info};
 use std::time::{Duration, Instant};
 
 pub struct TickCounter {
@@ -25,15 +26,19 @@ impl TickCounter {
   pub fn tps(&mut self) -> f32 {
     let now = Instant::now();
     let dtime = (now - self.last_calc).as_secs_f32();
-    if (dtime == 0.0) {
-      self.avg_tps = 1.0;
+    if dtime == 0.0 {
+      self.avg_tps = 60.0;
       return self.avg_tps;
     }
-    let tps = self.ticks as f32 / dtime;
-    self.last_calc = now;
-    self.ticks = 0;
-    // moving weighted average
-    self.avg_tps = self.alpha * self.avg_tps + (1.0 - self.alpha) * tps;
+    let calc_rate = 0.01;
+    if dtime >= calc_rate {
+      // only update after 1 second
+      let tps = self.ticks as f32 / dtime;
+      self.last_calc = now;
+      self.ticks = 0;
+      // moving weighted average
+      self.avg_tps = self.alpha * self.avg_tps + (1.0 - self.alpha) * tps;
+    }
     self.avg_tps
   }
 }

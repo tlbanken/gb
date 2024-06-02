@@ -202,6 +202,18 @@ impl Ui {
               gb_state.flow.speed = 1.00;
               ui.close_menu();
             }
+            if ui.button("200%").clicked() {
+              gb_state.flow.speed = 2.00;
+              ui.close_menu();
+            }
+            if ui.button("400%").clicked() {
+              gb_state.flow.speed = 4.00;
+              ui.close_menu();
+            }
+            if ui.button("800%").clicked() {
+              gb_state.flow.speed = 8.00;
+              ui.close_menu();
+            }
           });
           ui.monospace("  |  ");
 
@@ -270,6 +282,7 @@ impl Ui {
           clock_rate_mhz, percent
         ));
         ui.monospace(format!("UI FPS: {:.0}", fps));
+        ui.monospace(format!("GB FPS: {:.0}", gb_state.gb_fps.tps()));
       });
 
     // reset style

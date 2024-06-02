@@ -312,14 +312,15 @@ impl Ppu {
     Ok(())
   }
 
-  pub fn step(&mut self, cycle_budget: u32) -> GbResult<()> {
+  pub fn step(&mut self, cycle_budget: u32) -> GbResult<bool> {
+    let mut should_render = false;
     for _ in 0..cycle_budget {
-      self.step_one()?;
+      should_render = should_render | self.step_one()?;
     }
-    Ok(())
+    Ok(should_render)
   }
 
-  fn step_one(&mut self) -> GbResult<()> {
+  fn step_one(&mut self) -> GbResult<bool> {
     // only draw when we need to
     if self.stat.ppu_mode == PpuMode::Rendering {
       assert!(self.pos.y < VBLANK_START);
@@ -359,6 +360,7 @@ impl Ppu {
         let obj_color = self.get_color_from_attribute(&attr);
 
         // check if object should be drawn over background
+        assert!(!attr.flags.low_priority);
         if obj_color.is_some() && !attr.flags.low_priority {
           pixel_color = obj_color.unwrap();
         }
@@ -369,8 +371,8 @@ impl Ppu {
     }
 
     // update position
-    self.update_pos();
-    Ok(())
+    let is_new_frame = self.update_pos();
+    Ok(is_new_frame)
   }
 
   pub fn read(&self, addr: u16) -> GbResult<u8> {
@@ -499,8 +501,6 @@ impl Ppu {
 
   /// Given some object attribute data, get the pixel's color.
   fn get_color_from_attribute(&self, attribute: &ObjectAttribute) -> Option<screen::Color> {
-    assert!(!attribute.flags.flip_y);
-    // let x_rel = (scrolled_pos.x + 8) - attribute.x_pos as u32;
     let x_rel = (self.pos.x + 8) - attribute.x_pos as u32;
     let bit_x = if attribute.flags.flip_x {
       x_rel % 8
@@ -508,8 +508,11 @@ impl Ppu {
       7 - (x_rel % 8)
     };
     let mut tile_data_location = attribute.tile_idx as usize * TILE_DATA_SIZE as usize;
-    // let fine_y = ((scrolled_pos.y + 16) as u8 - attribute.y_pos) as usize;
-    let fine_y = ((self.pos.y + 16) as u8 - attribute.y_pos) as usize;
+    let mut fine_y = ((self.pos.y + 16) as u8 - attribute.y_pos) as usize;
+    if attribute.flags.flip_y {
+      // TODO: this doesn't seem totally right
+      fine_y = 16 - fine_y;
+    }
     tile_data_location += 2 * fine_y;
     let col_index = if fine_y < 8 {
       // first block
@@ -518,7 +521,6 @@ impl Ppu {
       ((lo_byte >> bit_x) & 0x1) | (((hi_byte >> bit_x) & 0x1) << 1)
     } else {
       // second block
-      assert!(self.lcdc.obj_size_large);
       let lo_byte = self.vram[tile_data_location + 2];
       let hi_byte = self.vram[tile_data_location + 3];
       ((lo_byte >> bit_x) & 0x1) | (((hi_byte >> bit_x) & 0x1) << 1)
@@ -540,7 +542,9 @@ impl Ppu {
     }
   }
 
-  fn update_pos(&mut self) {
+  fn update_pos(&mut self) -> bool {
+    // track if we finished a frame
+    let mut is_new_frame = false;
     // always advance x
     self.pos.x += 1;
 
@@ -565,6 +569,7 @@ impl Ppu {
         self.ic.lazy_dref_mut().raise(Interrupt::Vblank);
       } else if self.pos.y == VBLANK_END {
         // new frame
+        is_new_frame = true;
         self.wstart = false;
         self.pos.y = 0;
         self.stat.ppu_mode = PpuMode::Rendering;
@@ -590,6 +595,7 @@ impl Ppu {
     if self.wy == self.ly {
       self.wstart = true;
     }
+    return is_new_frame;
   }
 
   fn fill_oam_cache(&mut self) {
