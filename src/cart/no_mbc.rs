@@ -12,10 +12,10 @@ pub struct NoMbc {
 }
 
 impl NoMbc {
-  pub fn new(rom: Vec<u8>, ram_banks: u32) -> Self {
+  pub fn new(rom: Vec<u8>, ram_banks: usize) -> Self {
     Self {
       rom,
-      ram: vec![0; ram_banks as usize * RAM_BANK_SIZE],
+      ram: vec![0; ram_banks * RAM_BANK_SIZE],
     }
   }
 }

@@ -35,8 +35,8 @@ pub struct Header {
   pub mapper: MapperType,
   pub battery_present: bool,
   pub ram_present: bool,
-  pub rom_banks: u32,
-  pub ram_banks: u32,
+  pub rom_banks: usize,
+  pub ram_banks: usize,
   pub rom_version: u8,
   pub header_checksum: u8,
   pub global_checksum: u16,
@@ -120,7 +120,7 @@ impl Header {
   }
 }
 
-fn get_ram_banks(code: u8) -> u32 {
+fn get_ram_banks(code: u8) -> usize {
   match code {
     0x00 => 0,
     // 0x01 not valid
@@ -132,7 +132,7 @@ fn get_ram_banks(code: u8) -> u32 {
   }
 }
 
-fn get_rom_banks(code: u8) -> u32 {
+fn get_rom_banks(code: u8) -> usize {
   if code > 0x08 {
     panic!("Unsupported rom banks code [{:02X}]", code);
   }

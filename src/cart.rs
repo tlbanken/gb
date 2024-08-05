@@ -3,10 +3,12 @@
 mod header;
 mod mapper;
 mod mbc1;
+mod mbc3;
 mod no_mbc;
 
 use crate::cart::mapper::{Mapper, MapperType};
 use crate::cart::mbc1::Mbc1;
+use crate::cart::mbc3::Mbc3;
 use crate::cart::no_mbc::NoMbc;
 use crate::err::{GbError, GbErrorType, GbResult};
 use crate::gb_err;
@@ -41,6 +43,8 @@ const BOOT_ROM_END: u16 = 0x00ff;
 
 // 8 KB ram banks
 pub const RAM_BANK_SIZE: usize = 8 * 1024;
+// 16 KB rom banks
+pub const ROM_BANK_SIZE: usize = 16 * 1024;
 // External Ram start
 pub const ERAM_START: u16 = 0xa000;
 pub const ERAM_END: u16 = 0xbfff;
@@ -49,8 +53,6 @@ pub const ROM0_START: u16 = 0x0000;
 pub const ROM0_END: u16 = 0x3fff;
 pub const ROM1_START: u16 = 0x4000;
 pub const ROM1_END: u16 = 0x7fff;
-
-pub const ROM_BANK_SIZE: u16 = 16 * 1024;
 
 pub struct Cartridge {
   pub path: PathBuf,
@@ -88,7 +90,20 @@ impl Cartridge {
     info!("----- HEADER END ------");
     match self.header.mapper {
       MapperType::None => self.mbc = Some(Box::new(NoMbc::new(rom, self.header.ram_banks))),
-      MapperType::Mbc1 => self.mbc = Some(Box::new(Mbc1::new(rom, self.header.ram_banks))),
+      MapperType::Mbc1 => {
+        self.mbc = Some(Box::new(Mbc1::new(
+          rom,
+          self.header.rom_banks,
+          self.header.ram_banks,
+        )))
+      }
+      MapperType::Mbc3 => {
+        self.mbc = Some(Box::new(Mbc3::new(
+          rom,
+          self.header.rom_banks,
+          self.header.ram_banks,
+        )))
+      }
       _ => {
         error!("Unsupported Mapper!");
         return gb_err!(GbErrorType::Unsupported);
