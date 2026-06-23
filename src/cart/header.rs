@@ -136,7 +136,7 @@ fn get_rom_banks(code: u8) -> usize {
   if code > 0x08 {
     panic!("Unsupported rom banks code [{:02X}]", code);
   }
-  1 << code
+  2 << code
 }
 
 fn get_cart_type(code: u8) -> CartridgeType {

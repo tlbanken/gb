@@ -1,8 +1,5 @@
 //! Gameboy state
 
-use egui_winit::winit::event_loop::EventLoopProxy;
-use std::{cell::RefCell, rc::Rc};
-
 use crate::int::Interrupts;
 use crate::screen::Screen;
 use crate::tick_counter::TickCounter;
@@ -10,6 +7,9 @@ use crate::timer::Timer;
 use crate::{
   bus::Bus, cart::Cartridge, cpu, cpu::Cpu, err::GbResult, joypad::Joypad, ppu::Ppu, ram::Ram,
 };
+use egui_winit::winit::event_loop::EventLoopProxy;
+use std::path::PathBuf;
+use std::{cell::RefCell, rc::Rc};
 
 use crate::event::UserEvent;
 use log::{error, warn};
@@ -59,7 +59,7 @@ impl GbState {
       wram: Rc::new(RefCell::new(Ram::new(8 * 1024))),
       hram: Rc::new(RefCell::new(Ram::new(127))),
       cart: Rc::new(RefCell::new(Cartridge::new())),
-      cpu: Rc::new(RefCell::new(Cpu::new())),
+      cpu: Rc::new(RefCell::new(Cpu::new(None))),
       ppu: Rc::new(RefCell::new(Ppu::new())),
       ic: Rc::new(RefCell::new(Interrupts::new())),
       timer: Rc::new(RefCell::new(Timer::new())),
@@ -76,9 +76,8 @@ impl GbState {
     &mut self,
     screen: Rc<RefCell<Screen>>,
     event_loop_proxy: EventLoopProxy<UserEvent>,
+    rom_path: Option<PathBuf>,
   ) -> GbResult<()> {
-    // TODO: load cartridge
-
     // connect PPU to screen
     self.ppu.borrow_mut().connect_screen(screen)?;
 
@@ -102,7 +101,42 @@ impl GbState {
     self.ppu.borrow_mut().connect_ic(self.ic.clone())?;
 
     // connect proxy
-    self.event_loop_proxy = Some(event_loop_proxy);
+    self.event_loop_proxy = Some(event_loop_proxy.clone());
+    self.cpu.borrow_mut().elp = Some(event_loop_proxy.clone());
+
+    // Load cartridge if a path was provided
+    if let Some(path) = rom_path {
+      self.cart.borrow_mut().load(path)?;
+    }
+
+    Ok(())
+  }
+
+  /// Initialise hardware without a window/GPU — for headless/debug runs.
+  pub fn init_headless(&mut self, rom_path: std::path::PathBuf) -> GbResult<()> {
+    // connect interrupts to cpu
+    self.ic.borrow_mut().connect_cpu(self.cpu.clone())?;
+
+    // connect Bus to memory (no screen needed)
+    self.bus.borrow_mut().connect_wram(self.wram.clone())?;
+    self.bus.borrow_mut().connect_hram(self.hram.clone())?;
+    self.bus.borrow_mut().connect_cartridge(self.cart.clone())?;
+    self.bus.borrow_mut().connect_ppu(self.ppu.clone())?;
+    self.bus.borrow_mut().connect_ic(self.ic.clone())?;
+    self.bus.borrow_mut().connect_timer(self.timer.clone())?;
+    self.bus.borrow_mut().connect_joypad(self.joypad.clone())?;
+
+    // connect modules to bus
+    self.cpu.borrow_mut().connect_bus(self.bus.clone())?;
+
+    // connect modules to interrupt controller
+    self.timer.borrow_mut().connect_ic(self.ic.clone())?;
+    self.ppu.borrow_mut().connect_ic(self.ic.clone())?;
+
+    // PPU screen left as None — headless mode skips pixel writes
+
+    // load ROM
+    self.cart.borrow_mut().load(rom_path)?;
 
     Ok(())
   }

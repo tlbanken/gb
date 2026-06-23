@@ -169,7 +169,13 @@ impl Cartridge {
 
   pub fn io_write(&mut self, addr: u16, data: u8) -> GbResult<()> {
     match addr {
-      0xff50 => self.boot_mode = data == 0,
+      // Any non-zero write to $FF50 disables the boot ROM (write-once).
+      // The DMG boot ROM writes $01, MGB writes $FF. Once cleared it cannot be re-enabled.
+      0xff50 => {
+        if self.boot_mode && data != 0 {
+          self.boot_mode = false;
+        }
+      }
       _ => return gb_err!(GbErrorType::OutOfBounds),
     }
     Ok(())

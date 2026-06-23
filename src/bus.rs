@@ -32,6 +32,8 @@ pub const OAM_START: u16 = 0xfe00;
 pub const OAM_END: u16 = 0xfe9f;
 pub const WRAM_START: u16 = 0xc000;
 pub const WRAM_END: u16 = 0xdfff;
+pub const ECHO_RAM_START: u16 = 0xe000;
+pub const ECHO_RAM_END: u16 = 0xfdff;
 pub const TIMER_START: u16 = 0xff04;
 pub const TIMER_END: u16 = 0xff07;
 pub const JOYPAD_EXACT: u16 = 0xff00;
@@ -148,6 +150,8 @@ impl Bus {
       PPU_START..=PPU_END | OAM_START..=OAM_END => self.ppu.lazy_dref().read(addr),
       PPU_IO_START..=PPU_IO_END => self.ppu.lazy_dref().io_read(addr),
       WRAM_START..=WRAM_END => self.wram.lazy_dref().read(addr - WRAM_START),
+      // Echo RAM mirrors WRAM ($C000-$DDFF)
+      ECHO_RAM_START..=ECHO_RAM_END => self.wram.lazy_dref().read(addr - ECHO_RAM_START),
       HRAM_START..=HRAM_END => self.hram.lazy_dref().read(addr - HRAM_START),
       TIMER_START..=TIMER_END => self.timer.lazy_dref().read(addr),
       IE_ADDR | IF_ADDR => self.ic.lazy_dref().read(addr),
@@ -160,55 +164,18 @@ impl Bus {
     }
   }
 
+  /// Non-panicking peek for debug/trace purposes — returns 0xFF on any error.
+  pub fn read8_debug(&self, addr: u16) -> u8 {
+    self.read8(addr).unwrap_or(0xff)
+  }
+
   pub fn read16(&self, addr: u16) -> GbResult<u16> {
     #[cfg(debug_assertions)]
     trace!("READ16 ${:04X}", addr);
-
-    // read with relative addressing
-    Ok(match addr {
-      CART_ROM_START..=CART_ROM_END => u16::from_le_bytes([
-        self.cart.lazy_dref().read(addr)?,
-        self.cart.lazy_dref().read(addr + 1)?,
-      ]),
-      CART_RAM_START..=CART_RAM_END => u16::from_le_bytes([
-        self.cart.lazy_dref().read(addr)?,
-        self.cart.lazy_dref().read(addr + 1)?,
-      ]),
-      CART_IO_START..=CART_IO_END => u16::from_le_bytes([
-        self.cart.lazy_dref().io_read(addr)?,
-        self.cart.lazy_dref().io_read(addr + 1)?,
-      ]),
-      PPU_START..=PPU_END | OAM_START..=OAM_END => u16::from_le_bytes([
-        self.ppu.lazy_dref().read(addr)?,
-        self.ppu.lazy_dref().read(addr + 1)?,
-      ]),
-      PPU_IO_START..=PPU_IO_END => u16::from_le_bytes([
-        self.ppu.lazy_dref().io_read(addr)?,
-        self.ppu.lazy_dref().io_read(addr + 1)?,
-      ]),
-      WRAM_START..=WRAM_END => u16::from_le_bytes([
-        self.wram.lazy_dref().read(addr - WRAM_START)?,
-        self.wram.lazy_dref().read(addr - WRAM_START + 1)?,
-      ]),
-      HRAM_START..=HRAM_END => u16::from_le_bytes([
-        self.hram.lazy_dref().read(addr - HRAM_START)?,
-        self.hram.lazy_dref().read(addr - HRAM_START + 1)?,
-      ]),
-      TIMER_START..=TIMER_END => u16::from_le_bytes([
-        self.timer.lazy_dref().read(addr)?,
-        self.timer.lazy_dref().read(addr + 1)?,
-      ]),
-      IF_ADDR | IE_ADDR => u16::from_le_bytes([
-        self.ic.lazy_dref().read(addr)?,
-        self.ic.lazy_dref().read(addr + 1)?,
-      ]),
-
-      // unsupported
-      _ => {
-        warn!("Unsupported read16 address: ${:04X}. Returning 0xff", addr);
-        0xff
-      }
-    })
+    // treat read16 as 2 read8's
+    let lo = self.read8(addr)?;
+    let hi = self.read8(addr.wrapping_add(1))?;
+    Ok(u16::from_le_bytes([lo, hi]))
   }
 
   pub fn write8(&mut self, addr: u16, val: u8) -> GbResult<()> {
@@ -239,6 +206,8 @@ impl Bus {
         }
       }
       WRAM_START..=WRAM_END => self.wram.lazy_dref_mut().write(addr - WRAM_START, val),
+      // Echo RAM mirrors WRAM ($C000-$DDFF)
+      ECHO_RAM_START..=ECHO_RAM_END => self.wram.lazy_dref_mut().write(addr - ECHO_RAM_START, val),
       HRAM_START..=HRAM_END => self.hram.lazy_dref_mut().write(addr - HRAM_START, val),
       TIMER_START..=TIMER_END => self.timer.lazy_dref_mut().write(addr, val),
       IE_ADDR | IF_ADDR => self.ic.lazy_dref_mut().write(addr, val),
@@ -254,65 +223,8 @@ impl Bus {
   pub fn write16(&mut self, addr: u16, val: u16) -> GbResult<()> {
     #[cfg(debug_assertions)]
     trace!("WRITE16 0x{:04x} ({}) to ${:04X}", val, val, addr);
-
-    // write with relative addressing
-    let bytes = val.to_le_bytes();
-    Ok(match addr {
-      CART_ROM_START..=CART_ROM_END => {
-        self.cart.lazy_dref_mut().write(addr, bytes[0])?;
-        self.cart.lazy_dref_mut().write(addr + 1, bytes[1])?;
-      }
-      CART_RAM_START..=CART_RAM_END => {
-        self.cart.lazy_dref_mut().write(addr, bytes[0])?;
-        self.cart.lazy_dref_mut().write(addr + 1, bytes[1])?;
-      }
-      CART_IO_START..=CART_IO_END => {
-        self.cart.lazy_dref_mut().io_write(addr, bytes[0])?;
-        self.cart.lazy_dref_mut().io_write(addr + 1, bytes[1])?;
-      }
-      PPU_START..=PPU_END | OAM_START..=OAM_END => {
-        self.ppu.lazy_dref_mut().write(addr, bytes[0])?;
-        self.ppu.lazy_dref_mut().write(addr + 1, bytes[1])?;
-      }
-      PPU_IO_START..=PPU_IO_END => {
-        self.ppu.lazy_dref_mut().io_write(addr, bytes[0])?;
-        self.ppu.lazy_dref_mut().io_write(addr + 1, bytes[1])?;
-      }
-      WRAM_START..=WRAM_END => {
-        self
-          .wram
-          .lazy_dref_mut()
-          .write(addr - WRAM_START, bytes[0])?;
-        self
-          .wram
-          .lazy_dref_mut()
-          .write(addr - WRAM_START + 1, bytes[1])?;
-      }
-      HRAM_START..=HRAM_END => {
-        self
-          .hram
-          .lazy_dref_mut()
-          .write(addr - HRAM_START, bytes[0])?;
-        self
-          .hram
-          .lazy_dref_mut()
-          .write(addr - HRAM_START + 1, bytes[1])?;
-      }
-      TIMER_START..=TIMER_END => {
-        self.timer.lazy_dref_mut().write(addr, bytes[0])?;
-        self.timer.lazy_dref_mut().write(addr + 1, bytes[1])?;
-      }
-      IF_ADDR | IE_ADDR => {
-        self.ic.lazy_dref_mut().write(addr, bytes[0])?;
-        self.ic.lazy_dref_mut().write(addr + 1, bytes[1])?;
-      }
-      // unsupported
-      _ => {
-        warn!(
-          "Unsupported write16 address: [{:04X}] -> ${:04X}",
-          val, addr
-        );
-      }
-    })
+    let le_bytes = val.to_le_bytes();
+    self.write8(addr, le_bytes[0])?;
+    self.write8(addr.wrapping_add(1), le_bytes[1])
   }
 }

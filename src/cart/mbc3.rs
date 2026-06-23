@@ -1,4 +1,4 @@
-//! Mbc2 mapper
+//! Mbc3 mapper
 
 use crate::cart::mapper::Mapper;
 use crate::cart::{
@@ -25,18 +25,22 @@ enum RamRtcSelect {
   RtcH,
   RtcDL,
   RtcDH,
+  Invalid,
 }
 
 impl From<u8> for RamRtcSelect {
   fn from(val: u8) -> RamRtcSelect {
     match val {
-      0x00..=0x03 => RamRtcSelect::RamBank(val as usize),
+      0x00..=0x07 => RamRtcSelect::RamBank(val as usize),
       0x08 => RamRtcSelect::RtcS,
       0x09 => RamRtcSelect::RtcM,
       0x0A => RamRtcSelect::RtcH,
       0x0B => RamRtcSelect::RtcDL,
       0x0C => RamRtcSelect::RtcDH,
-      _ => panic!("Invalid Ram/Rtc selection: {val}"),
+      _ => {
+        warn!("Invalid Ram/Rtc selection: {val}");
+        RamRtcSelect::Invalid
+      }
     }
   }
 }
@@ -69,6 +73,7 @@ pub struct Mbc3 {
   ram_rtc_select: RamRtcSelect,
   rtc: Rtc,
   latched_rtc: Rtc,
+  last_latch_val: u8,
 }
 
 impl Mbc3 {
@@ -96,31 +101,35 @@ impl Mbc3 {
       ram_rtc_select: RamRtcSelect::RamBank(0),
       rtc: Rtc::default(),
       latched_rtc: Rtc::default(),
+      last_latch_val: 0xff,
     }
   }
 
-  // write to one of the rtc register
+  // read from one of the rtc registers
   pub fn read_rtc(&self) -> GbResult<u8> {
-    // TODO
     match self.ram_rtc_select {
-      RamRtcSelect::RtcS => Ok(self.rtc.s),
-      RamRtcSelect::RtcM => Ok(self.rtc.m),
-      RamRtcSelect::RtcH => Ok(self.rtc.h),
-      RamRtcSelect::RtcDL => Ok(self.rtc.dl),
-      RamRtcSelect::RtcDH => Ok(self.rtc.dh),
-      _ => panic!("Unexpected rtc reg"),
+      RamRtcSelect::RtcS => Ok(self.latched_rtc.s),
+      RamRtcSelect::RtcM => Ok(self.latched_rtc.m),
+      RamRtcSelect::RtcH => Ok(self.latched_rtc.h),
+      RamRtcSelect::RtcDL => Ok(self.latched_rtc.dl),
+      RamRtcSelect::RtcDH => Ok(self.latched_rtc.dh),
+      _ => Ok(0xff),
     }
   }
 
-  // write to one of the rtc register
+  // write to one of the rtc registers
   pub fn write_rtc(&mut self, val: u8) -> GbResult<()> {
     match self.ram_rtc_select {
-      RamRtcSelect::RtcS => self.rtc.s = val,
-      RamRtcSelect::RtcM => self.rtc.m = val,
-      RamRtcSelect::RtcH => self.rtc.h = val,
+      RamRtcSelect::RtcS => self.rtc.s = val & 0x3f,
+      RamRtcSelect::RtcM => self.rtc.m = val & 0x3f,
+      RamRtcSelect::RtcH => self.rtc.h = val & 0x1f,
       RamRtcSelect::RtcDL => self.rtc.dl = val,
-      RamRtcSelect::RtcDH => self.rtc.dh = val,
-      _ => panic!("Unexpected rtc reg"),
+      RamRtcSelect::RtcDH => {
+        self.rtc.dh = val & 0xc1;
+        self.rtc.halt = (val & 0x40) != 0;
+        self.rtc.day_carry = (val & 0x80) != 0;
+      }
+      _ => {}
     }
     Ok(())
   }
@@ -132,11 +141,31 @@ impl Mapper for Mbc3 {
     let rel_ram_addr = addr as usize % RAM_BANK_SIZE;
     match addr {
       ROM0_START..=ROM0_END => Ok(self.rom[0][rel_rom_addr]),
-      ROM1_START..=ROM1_END => Ok(self.rom[self.rom_bank][rel_rom_addr]),
-      ERAM_START..=ERAM_END => match self.ram_rtc_select {
-        RamRtcSelect::RamBank(bank) => Ok(self.ram[bank][rel_ram_addr]),
-        _ => self.read_rtc(),
-      },
+      ROM1_START..=ROM1_END => {
+        let bank = self.rom_bank % self.rom.len();
+        Ok(self.rom[bank][rel_rom_addr])
+      }
+      ERAM_START..=ERAM_END => {
+        if self.ram_and_timer_enabled {
+          match self.ram_rtc_select {
+            RamRtcSelect::RamBank(bank) => {
+              if !self.ram.is_empty() {
+                let bank = bank % self.ram.len();
+                Ok(self.ram[bank][rel_ram_addr])
+              } else {
+                Ok(0xff)
+              }
+            }
+            _ => self.read_rtc(),
+          }
+        } else {
+          warn!(
+            "Reading ERAM @0x{:04x} while disabled! Returning 0xff...",
+            addr
+          );
+          Ok(0xff)
+        }
+      }
       _ => {
         error!("Invalid Read ${:04X}", addr);
         gb_err!(GbErrorType::OutOfBounds)
@@ -163,15 +192,27 @@ impl Mapper for Mbc3 {
         self.ram_rtc_select = RamRtcSelect::from(val)
       }
       LATCH_CLOCK_START..=LATCH_CLOCK_END => {
-        // TODO: Should write 00 -> 01 for latch to work
-        self.latched_rtc = self.rtc;
-      }
-      ERAM_START..=ERAM_END => match self.ram_rtc_select {
-        RamRtcSelect::RamBank(bank) => {
-          self.ram[bank][rel_ram_addr] = val;
+        // Latch when writing 0x00 and then 0x01
+        if self.last_latch_val == 0x00 && val == 0x01 {
+          self.latched_rtc = self.rtc;
         }
-        _ => self.write_rtc(val)?,
-      },
+        self.last_latch_val = val;
+      }
+      ERAM_START..=ERAM_END => {
+        if self.ram_and_timer_enabled {
+          match self.ram_rtc_select {
+            RamRtcSelect::RamBank(bank) => {
+              if !self.ram.is_empty() {
+                let bank = bank % self.ram.len();
+                self.ram[bank][rel_ram_addr] = val;
+              }
+            }
+            _ => self.write_rtc(val)?,
+          }
+        } else {
+          warn!("Disabled ERAM write [{:02X}] -> ${:04X}", val, addr);
+        }
+      }
       _ => {
         error!("Invalid Write [{:02X}] -> ${:04X}", val, addr);
         return gb_err!(GbErrorType::OutOfBounds);

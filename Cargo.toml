@@ -10,10 +10,11 @@ instr-trace = []
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
+ahash = "0.8.7"
 bit_field = "0.10.2"
 log = { version = "0.4.20", features = [
     "max_level_trace",
-    "release_max_level_warn",
+    "release_max_level_info",
 ] }
 bytemuck = { version = "1.14.0", features = ["derive"] }
 egui-wgpu = { version = "0.24.0", features = ["winit"] }

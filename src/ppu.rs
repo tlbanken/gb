@@ -215,6 +215,7 @@ pub struct ObjectAttribute {
   pub x_pos: u8,
   pub tile_idx: u8,
   pub flags: ObjAttrFlags,
+  pub oam_idx: usize,
 }
 
 impl From<[u8; 4]> for ObjectAttribute {
@@ -224,6 +225,7 @@ impl From<[u8; 4]> for ObjectAttribute {
       x_pos: value[1],
       tile_idx: value[2],
       flags: ObjAttrFlags::from(value[3]),
+      oam_idx: 0,
     }
   }
 }
@@ -315,7 +317,11 @@ impl Ppu {
   pub fn step(&mut self, cycle_budget: u32) -> GbResult<bool> {
     let mut should_render = false;
     for _ in 0..cycle_budget {
-      should_render = should_render | self.step_one()?;
+      // TODO: Did we want short circuit? I assume no so will comment out for now
+      // should_render = should_render || self.step_one()?;
+      if self.step_one()? {
+        should_render = true;
+      }
     }
     Ok(should_render)
   }
@@ -351,23 +357,34 @@ impl Ppu {
       // next we get the tile data info
       let tile_data = self.get_tile_data_location(tile_data_index, pos);
       // now transform that tile data into a color
-      let mut pixel_color = self.get_color_from_tile_data(tile_data, pos);
+      let (mut pixel_color, bg_color_idx) = if self.lcdc.bg_win_enable {
+        self.get_color_from_tile_data(tile_data, pos)
+      } else {
+        // When LCDC.0 is disabled, DMG background is white (index 0)
+        let bg_color_0_idx = self.bgp & 0x3;
+        (self.palette[bg_color_0_idx as usize], 0)
+      };
 
-      // find obj attributes from cache
-      let objs = self.get_available_cached_objs();
-      for attr in objs {
-        // get object color
-        let obj_color = self.get_color_from_attribute(&attr);
-
-        // check if object should be drawn over background
-        assert!(!attr.flags.low_priority);
-        if obj_color.is_some() && !attr.flags.low_priority {
-          pixel_color = obj_color.unwrap();
+      if self.lcdc.obj_enabled {
+        // find obj attributes from cache
+        let objs = self.get_available_cached_objs();
+        for attr in objs {
+          // get object color
+          if let Some(obj_color) = self.get_color_from_attribute(&attr) {
+            // check if object should be drawn over background
+            // low_priority = 1 (behind BG color 1-3): only draw if background color index is 0
+            // low_priority = 0 (above BG): always draw
+            if !attr.flags.low_priority || bg_color_idx == 0 {
+              pixel_color = obj_color;
+            }
+          }
         }
       }
 
-      // draw pixel
-      self.screen.lazy_dref_mut().set_pixel(self.pos, pixel_color);
+      // draw pixel (screen may be None in headless mode)
+      if let Some(screen) = &self.screen {
+        screen.borrow_mut().set_pixel(self.pos, pixel_color);
+      }
     }
 
     // update position
@@ -489,14 +506,14 @@ impl Ppu {
   }
 
   /// Given a tile, construct the tile
-  fn get_color_from_tile_data(&self, tile_data_location: u16, scrolled_pos: Pos) -> screen::Color {
+  fn get_color_from_tile_data(&self, tile_data_location: u16, scrolled_pos: Pos) -> (screen::Color, u8) {
     // let bit_x = 7 - self.pos.x % 8;
     let bit_x = 7 - scrolled_pos.x % 8;
     let lo_byte = self.vram[tile_data_location as usize];
     let hi_byte = self.vram[tile_data_location as usize + 1];
     let col_index = ((lo_byte >> bit_x) & 0x1) | (((hi_byte >> bit_x) & 0x1) << 1);
     let palette_index = (self.bgp >> (col_index * 2)) & 0x3;
-    self.palette[palette_index as usize]
+    (self.palette[palette_index as usize], col_index)
   }
 
   /// Given some object attribute data, get the pixel's color.
@@ -617,7 +634,9 @@ impl Ppu {
             self.oam[obj_idx + 2],
             self.oam[obj_idx + 3],
           ];
-          self.oam_cache.push(ObjectAttribute::from(obj_bytes));
+          let mut attr = ObjectAttribute::from(obj_bytes);
+          attr.oam_idx = obj_idx;
+          self.oam_cache.push(attr);
         }
       }
       // obj attribute is 4 bytes
@@ -641,13 +660,11 @@ impl Ppu {
   // Sort the object attrs by largest x coord. Larger X coord are lower priority
   // so iterating over in order will allow to overwrite the color.
   fn sort_obj_attributes_by_rev_render_order(objs: &mut Vec<ObjectAttribute>) {
-    // simple insertion sort since objs will be 10 or less in size
-    for min_start in 0..objs.len() {
-      for i in min_start..objs.len() {
-        if objs[i].x_pos < objs[min_start].x_pos {
-          objs.swap(i, min_start);
-        }
+    objs.sort_by(|a, b| {
+      match b.x_pos.cmp(&a.x_pos) {
+        std::cmp::Ordering::Equal => b.oam_idx.cmp(&a.oam_idx),
+        ord => ord,
       }
-    }
+    });
   }
 }

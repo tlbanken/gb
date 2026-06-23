@@ -80,7 +80,7 @@ impl Interrupts {
   pub fn read(&self, addr: u16) -> GbResult<u8> {
     match addr {
       IE_ADDR => Ok(self.ie),
-      IF_ADDR => Ok(self.iflag),
+      IF_ADDR => Ok(self.iflag | 0xE0), // bits 5-7 are open-bus, always read as 1
       _ => {
         error!("Unknown read from addr ${:04X}", addr);
         gb_err!(GbErrorType::OutOfBounds)
@@ -91,7 +91,7 @@ impl Interrupts {
   pub fn write(&mut self, addr: u16, data: u8) -> GbResult<()> {
     match addr {
       IE_ADDR => self.ie = data,
-      IF_ADDR => self.iflag = data,
+      IF_ADDR => self.iflag = data & 0x1F, // bits 5-7 are open-bus, ignore writes
       _ => {
         error!("Unknown write: 0x{:02X} -> ${:04X}", data, addr);
         return gb_err!(GbErrorType::OutOfBounds);
@@ -102,7 +102,7 @@ impl Interrupts {
 
   fn collect_interrupts(&self) -> Vec<Interrupt> {
     let mut ints = Vec::new();
-    for bit in 0..7 {
+    for bit in 0..5 { // only bits 0-4 are valid interrupt sources
       if (1 << bit) & self.iflag > 0 {
         ints.push(Interrupt::try_from(1 << bit).unwrap());
       }

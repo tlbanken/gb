@@ -61,7 +61,11 @@ impl Gameboy {
     }
   }
 
-  pub fn run(mut self) -> GbResult<()> {
+  pub fn run(self) -> GbResult<()> {
+    self.run_with_rom(None)
+  }
+
+  pub fn run_with_rom(mut self, rom_path: Option<std::path::PathBuf>) -> GbResult<()> {
     info!("Starting emulation");
 
     // build event loop and window with custom event support
@@ -85,7 +89,7 @@ impl Gameboy {
     let mut video = pollster::block_on(Video::new(window, ui));
 
     // initialize the gb state
-    self.state.init(video.screen(), event_loop.create_proxy())?;
+    self.state.init(video.screen(), event_loop.create_proxy(), rom_path)?;
 
     self.last_render = Instant::now();
     // run as fast as possible
@@ -150,12 +154,11 @@ impl Gameboy {
           let flow = self.state.flow;
           let elp = self.state.event_loop_proxy.clone();
           self.state = GbState::new(flow);
-          self.state.init(video.screen(), elp.unwrap())?;
+          self.state.init(video.screen(), elp.unwrap(), None)?;
           if let Some(path_unwrapped) = path {
             self.state.cart.borrow_mut().load(path_unwrapped)?;
           }
         }
-        _ => {}
       },
       _ => {}
     }
@@ -282,7 +285,7 @@ impl Gameboy {
 }
 
 // Initialize logging and set the level filter
-fn init_logging(level_filter: LevelFilter) {
+pub fn init_logging(level_filter: LevelFilter) {
   log::set_max_level(level_filter);
   unsafe {
     LOGGER = Logger::new(level_filter);

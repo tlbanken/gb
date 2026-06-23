@@ -24,7 +24,7 @@ pub struct Mbc1 {
   rom_bank: usize,
   // either ram bank or upper 2 bits of rom bank
   secondary_bank: usize,
-  simple_bank_mode: bool,
+  advanced_mode: bool,
   num_rom_banks: usize,
 }
 
@@ -51,27 +51,35 @@ impl Mbc1 {
       ram_enabled: false,
       rom_bank: 1,
       secondary_bank: 0,
-      simple_bank_mode: false,
+      advanced_mode: false, // Starts in Mode 0 (Simple mode) by default
       num_rom_banks,
     }
   }
 
   fn get_mapped_rom_bank0(&self) -> usize {
-    if self.simple_bank_mode {
-      // simple mode has no mapping for bank 0
-      0
-    } else {
-      // use upper bits from secondary bank
+    let bank = if self.advanced_mode {
       self.secondary_bank << 5
-    }
+    } else {
+      0
+    };
+    bank % self.num_rom_banks
   }
 
   fn get_mapped_rom_bank1(&self) -> usize {
-    (self.secondary_bank << 5) | self.rom_bank
+    let bank = (self.secondary_bank << 5) | self.rom_bank;
+    bank % self.num_rom_banks
   }
 
   fn get_mapped_ram_bank(&self) -> usize {
-    self.secondary_bank
+    if self.ram.is_empty() {
+      return 0;
+    }
+    let bank = if self.advanced_mode {
+      self.secondary_bank
+    } else {
+      0
+    };
+    bank % self.ram.len()
   }
 }
 
@@ -83,11 +91,12 @@ impl Mapper for Mbc1 {
       ROM0_START..=ROM0_END => Ok(self.rom[self.get_mapped_rom_bank0()][rel_rom_addr]),
       ROM1_START..=ROM1_END => Ok(self.rom[self.get_mapped_rom_bank1()][rel_rom_addr]),
       ERAM_START..=ERAM_END => {
-        if self.ram_enabled {
-          Ok(self.ram[self.get_mapped_ram_bank()][rel_ram_addr])
+        if self.ram_enabled && !self.ram.is_empty() {
+          let bank = self.get_mapped_ram_bank();
+          Ok(self.ram[bank][rel_ram_addr])
         } else {
           warn!(
-            "Reading ERAM @0x{:04x} while disabled! Returning 0xff...",
+            "Reading ERAM @0x{:04x} while disabled or empty! Returning 0xff...",
             addr
           );
           Ok(0xff)
@@ -108,21 +117,27 @@ impl Mapper for Mbc1 {
         self.ram_enabled = val & 0x0f == 0xa;
       }
       ROM_BANK_NUM_START..=ROM_BANK_NUM_END => {
+        let masked_val = val & 0x1f;
         // setting to 0 acts as setting to 1
-        if val == 0 {
+        if masked_val == 0 {
           self.rom_bank = 0x01;
         } else {
-          self.rom_bank = val as usize % self.num_rom_banks;
+          self.rom_bank = masked_val as usize;
         }
       }
       RAM_BANK_NUM_START..=RAM_BANK_NUM_END => {
         self.secondary_bank = val as usize & 0x3;
       }
-      BANK_MODE_START..=BANK_MODE_END => self.simple_bank_mode = val & 0x1 > 0,
+      BANK_MODE_START..=BANK_MODE_END => {
+        // 0 = simple mode, 1 = advanced mode
+        self.advanced_mode = (val & 0x1) == 1;
+      }
       ERAM_START..=ERAM_END => {
-        if self.ram_enabled {
+        if self.ram_enabled && !self.ram.is_empty() {
           let bank = self.get_mapped_ram_bank();
           self.ram[bank][rel_ram_addr] = val
+        } else {
+          warn!("Disabled or empty ERAM write [{:02X}] -> ${:04X}", val, addr);
         }
       }
       _ => {

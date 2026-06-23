@@ -3,6 +3,9 @@
 //! MHz.
 #![allow(non_snake_case)]
 
+#[cfg(feature = "instr-trace")]
+use crate::dasm::Dasm;
+use egui_winit::winit::event_loop::EventLoopProxy;
 use log::{debug, error, warn};
 use std::collections::VecDeque;
 #[cfg(feature = "instr-trace")]
@@ -17,6 +20,7 @@ use crate::int::Interrupt;
 use crate::{
   bus::Bus,
   err::{GbError, GbErrorType, GbResult},
+  event::UserEvent,
   gb_err,
   util::LazyDref,
 };
@@ -101,6 +105,9 @@ pub struct Cpu {
   // instruction dispatchers
   dispatcher: Vec<DispatchFn>,
   dispatcher_cb: Vec<DispatchFn>,
+
+  // event proxy
+  pub elp: Option<EventLoopProxy<UserEvent>>,
 }
 
 pub struct Register {
@@ -124,7 +131,7 @@ impl Register {
 }
 
 impl Cpu {
-  pub fn new() -> Cpu {
+  pub fn new(elp: Option<EventLoopProxy<UserEvent>>) -> Cpu {
     #[cfg(feature = "instr-trace")]
     let trace_file = {
       let mut path = env::current_exe().unwrap();
@@ -145,6 +152,7 @@ impl Cpu {
       dispatcher: Self::init_dispatcher(),
       dispatcher_cb: Self::init_dispatcher_cb(),
       history: InstrHistory::new(HISTORY_CAP),
+      elp,
       #[cfg(feature = "instr-trace")]
       trace_file,
     }
@@ -165,6 +173,19 @@ impl Cpu {
       // TODO: what to return for cycles if halted?
       return Ok(4);
     }
+
+    // debugging for unaligned sp
+    // if self.sp % 2 != 0 {
+    //   warn!("Unaligned $SP: 0x{:04x}", self.sp);
+    //   warn!("PC: 0x{:04x}", self.pc);
+    //   self
+    //     .elp
+    //     .as_ref()
+    //     .unwrap()
+    //     .send_event(UserEvent::EmuPause)
+    //     .unwrap();
+    //   return Ok(0);
+    // }
 
     // instruction tracing
     #[cfg(feature = "instr-trace")]
@@ -3775,15 +3796,44 @@ impl Cpu {
 
   // *** Other ***
 
+  // fn pop(&mut self) -> GbResult<u16> {
+  //   let val = self.bus.lazy_dref().read16(self.sp)?;
+  //   self.sp = self.sp.wrapping_add(2);
+  //   Ok(val)
+  // }
+
   fn pop(&mut self) -> GbResult<u16> {
-    let val = self.bus.lazy_dref().read16(self.sp)?;
-    self.sp = self.sp.wrapping_add(2);
-    Ok(val)
+    // 1. Read the LOW byte from the current SP, then increment SP
+    let low_byte = self.bus.lazy_dref().read8(self.sp)? as u16;
+    self.sp = self.sp.wrapping_add(1);
+
+    // 2. Read the HIGH byte from the new SP, then increment SP again
+    let high_byte = self.bus.lazy_dref().read8(self.sp)? as u16;
+    self.sp = self.sp.wrapping_add(1);
+
+    // Combine them into a single 16-bit value (High | Low)
+    Ok((high_byte << 8) | low_byte)
   }
 
+  // fn push(&mut self, rr: u16) -> GbResult<()> {
+  //   self.sp = self.sp.wrapping_sub(2);
+  //   self.bus.lazy_dref_mut().write16(self.sp, rr)
+  // }
+
+  // push fix-attempt
   fn push(&mut self, rr: u16) -> GbResult<()> {
-    self.sp = self.sp.wrapping_sub(2);
-    self.bus.lazy_dref_mut().write16(self.sp, rr)
+    let high_byte = (rr >> 8) as u8;
+    let low_byte = (rr & 0xFF) as u8;
+
+    // 1. Decrement SP and write the HIGH byte
+    self.sp = self.sp.wrapping_sub(1);
+    self.bus.lazy_dref_mut().write8(self.sp, high_byte)?;
+
+    // 2. Decrement SP again and write the LOW byte
+    self.sp = self.sp.wrapping_sub(1);
+    self.bus.lazy_dref_mut().write8(self.sp, low_byte)?;
+
+    Ok(())
   }
 
   /// POP BC
