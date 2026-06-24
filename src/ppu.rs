@@ -35,10 +35,9 @@ const TILE_DATA_START_HI: u16 = 0x9000 - bus::PPU_START;
 const TILE_DATA_SIZE: u8 = 16;
 
 // Important Pixel Positions
-const HBLANK_START: u32 = 160;
-const HBLANK_END: u32 = 360; // TODO: what is the correct value here?
+const HBLANK_END: u32 = 456;
 const VBLANK_START: u32 = 144;
-const VBLANK_END: u32 = 154 + 1;
+const VBLANK_END: u32 = 154;
 
 // Color Palettes
 pub const PALETTE_GRAY: [screen::Color; 4] = [
@@ -163,6 +162,17 @@ pub struct Status {
   pub lyc_int_select: bool,
 }
 
+impl Status {
+  /// Update the status register from a CPU write (preserving read-only bits)
+  #[inline]
+  pub fn write(&mut self, data: u8) {
+    self.mode0_int_select = data.get_bit(3);
+    self.mode1_int_select = data.get_bit(4);
+    self.mode2_int_select = data.get_bit(5);
+    self.lyc_int_select = data.get_bit(6);
+  }
+}
+
 impl From<u8> for Status {
   fn from(value: u8) -> Self {
     Self {
@@ -256,6 +266,8 @@ pub struct Ppu {
   pub wy: u8,
   pub wx: u8,
   pub wstart: bool,
+  pub win_line_counter: u32,
+  pub win_drawn_this_line: bool,
 
   // palette
   pub palette: [screen::Color; 4],
@@ -271,9 +283,9 @@ pub struct Ppu {
 
 impl Ppu {
   pub fn new() -> Ppu {
-    // start in rendering mode
+    // start in HBlank mode (PPU is disabled by default)
     let mut stat: Status = 0.into();
-    stat.ppu_mode = PpuMode::Rendering;
+    stat.ppu_mode = PpuMode::HBlank;
 
     Ppu {
       vram: vec![0; VRAM_SIZE],
@@ -290,6 +302,8 @@ impl Ppu {
       wy: 0,
       wx: 0,
       wstart: false,
+      win_line_counter: 0,
+      win_drawn_this_line: false,
       palette: PALETTE_GRAY,
       screen: None,
       ic: None,
@@ -327,19 +341,27 @@ impl Ppu {
   }
 
   fn step_one(&mut self) -> GbResult<bool> {
+    if !self.lcdc.ppu_enabled {
+      return Ok(false);
+    }
+
     // only draw when we need to
     if self.stat.ppu_mode == PpuMode::Rendering {
-      assert!(self.pos.y < VBLANK_START);
-      assert!(self.pos.x < HBLANK_START);
+      if self.pos.y >= VBLANK_START || self.pos.x < 80 || self.pos.x >= 240 {
+        return Ok(false);
+      }
+      let screen_x = self.pos.x - 80;
+
       // our pixel coordinate needs to be adjusted for scrolling
-      let scrolled_pos = self.pos_with_scroll();
+      let scrolled_pos = self.pos_with_scroll(screen_x);
       trace!("Adjusted Pos: {:?}", scrolled_pos);
 
       // position used in bg depends on if we are drawing the window or not
-      let draw_win = self.lcdc.win_enabled && self.wstart && self.pos.x as u8 + 7 >= self.wx;
+      let draw_win = self.lcdc.win_enabled && self.wstart && screen_x as u8 + 7 >= self.wx;
       let pos = if draw_win {
-        let y = self.pos.y - self.wy as u32;
-        let x = (self.pos.x + 7) - self.wx as u32;
+        self.win_drawn_this_line = true;
+        let y = self.win_line_counter;
+        let x = (screen_x + 7) - self.wx as u32;
         Pos { x, y }
       } else {
         scrolled_pos
@@ -367,13 +389,13 @@ impl Ppu {
 
       if self.lcdc.obj_enabled {
         // find obj attributes from cache
-        let objs = self.get_available_cached_objs();
+        let objs = self.get_available_cached_objs(screen_x);
         for attr in objs {
           // get object color
-          if let Some(obj_color) = self.get_color_from_attribute(&attr) {
+          if let Some(obj_color) = self.get_color_from_attribute(&attr, screen_x) {
             // check if object should be drawn over background
-            // low_priority = 1 (behind BG color 1-3): only draw if background color index is 0
-            // low_priority = 0 (above BG): always draw
+            // low_priority = 1 (behind BG color 1-3): only draw if background color index
+            // is 0 low_priority = 0 (above BG): always draw
             if !attr.flags.low_priority || bg_color_idx == 0 {
               pixel_color = obj_color;
             }
@@ -383,7 +405,11 @@ impl Ppu {
 
       // draw pixel (screen may be None in headless mode)
       if let Some(screen) = &self.screen {
-        screen.borrow_mut().set_pixel(self.pos, pixel_color);
+        let draw_pos = Pos {
+          x: screen_x,
+          y: self.pos.y,
+        };
+        screen.borrow_mut().set_pixel(draw_pos, pixel_color);
       }
     }
 
@@ -437,8 +463,24 @@ impl Ppu {
 
   pub fn io_write(&mut self, addr: u16, data: u8) -> GbResult<()> {
     match addr {
-      LCDC_ADDR => self.lcdc = data.into(),
-      STAT_ADDR => self.stat = data.into(),
+      LCDC_ADDR => {
+        let old_ppu_enabled = self.lcdc.ppu_enabled;
+        self.lcdc = data.into();
+        if old_ppu_enabled && !self.lcdc.ppu_enabled {
+          self.ly = 0;
+          self.pos.x = 0;
+          self.pos.y = 0;
+          self.stat.ppu_mode = PpuMode::HBlank;
+        } else if !old_ppu_enabled && self.lcdc.ppu_enabled {
+          self.ly = 0;
+          self.pos.x = 0;
+          self.pos.y = 0;
+          self.stat.ppu_mode = PpuMode::OamScan;
+          self.win_line_counter = 0;
+          self.win_drawn_this_line = false;
+        }
+      }
+      STAT_ADDR => self.stat.write(data),
       LYC_ADDR => self.lyc = data,
       BGP_ADDR => self.bgp = data,
       SCY_ADDR => self.scy = data,
@@ -506,7 +548,11 @@ impl Ppu {
   }
 
   /// Given a tile, construct the tile
-  fn get_color_from_tile_data(&self, tile_data_location: u16, scrolled_pos: Pos) -> (screen::Color, u8) {
+  fn get_color_from_tile_data(
+    &self,
+    tile_data_location: u16,
+    scrolled_pos: Pos,
+  ) -> (screen::Color, u8) {
     // let bit_x = 7 - self.pos.x % 8;
     let bit_x = 7 - scrolled_pos.x % 8;
     let lo_byte = self.vram[tile_data_location as usize];
@@ -517,31 +563,36 @@ impl Ppu {
   }
 
   /// Given some object attribute data, get the pixel's color.
-  fn get_color_from_attribute(&self, attribute: &ObjectAttribute) -> Option<screen::Color> {
-    let x_rel = (self.pos.x + 8) - attribute.x_pos as u32;
+  fn get_color_from_attribute(
+    &self,
+    attribute: &ObjectAttribute,
+    screen_x: u32,
+  ) -> Option<screen::Color> {
+    let x_rel = (screen_x + 8) - attribute.x_pos as u32;
     let bit_x = if attribute.flags.flip_x {
       x_rel % 8
     } else {
       7 - (x_rel % 8)
     };
-    let mut tile_data_location = attribute.tile_idx as usize * TILE_DATA_SIZE as usize;
+
+    let tile_idx = if self.lcdc.obj_size_large {
+      attribute.tile_idx & 0xFE
+    } else {
+      attribute.tile_idx
+    };
+    let mut tile_data_location = tile_idx as usize * TILE_DATA_SIZE as usize;
+
     let mut fine_y = ((self.pos.y + 16) as u8 - attribute.y_pos) as usize;
     if attribute.flags.flip_y {
-      // TODO: this doesn't seem totally right
-      fine_y = 16 - fine_y;
+      let max_y = if self.lcdc.obj_size_large { 15 } else { 7 };
+      fine_y = max_y - fine_y;
     }
+
     tile_data_location += 2 * fine_y;
-    let col_index = if fine_y < 8 {
-      // first block
-      let lo_byte = self.vram[tile_data_location];
-      let hi_byte = self.vram[tile_data_location + 1];
-      ((lo_byte >> bit_x) & 0x1) | (((hi_byte >> bit_x) & 0x1) << 1)
-    } else {
-      // second block
-      let lo_byte = self.vram[tile_data_location + 2];
-      let hi_byte = self.vram[tile_data_location + 3];
-      ((lo_byte >> bit_x) & 0x1) | (((hi_byte >> bit_x) & 0x1) << 1)
-    };
+    let lo_byte = self.vram[tile_data_location];
+    let hi_byte = self.vram[tile_data_location + 1];
+    let col_index = ((lo_byte >> bit_x) & 0x1) | (((hi_byte >> bit_x) & 0x1) << 1);
+
     let palette_index = (self.obp[attribute.flags.palette_idx as usize] >> (col_index * 2)) & 0x3;
     // color index of 0 is transparent
     if col_index == 0 {
@@ -551,10 +602,10 @@ impl Ppu {
     }
   }
 
-  fn pos_with_scroll(&self) -> screen::Pos {
+  fn pos_with_scroll(&self, screen_x: u32) -> screen::Pos {
     // self.pos
     Pos {
-      x: (self.pos.x + self.scx as u32) % 256,
+      x: (screen_x + self.scx as u32) % 256,
       y: (self.pos.y + self.scy as u32) % 256,
     }
   }
@@ -565,54 +616,77 @@ impl Ppu {
     // always advance x
     self.pos.x += 1;
 
-    if self.pos.x == HBLANK_START {
-      if self.stat.ppu_mode != PpuMode::VBlank {
-        self.stat.ppu_mode = PpuMode::HBlank;
-      }
-    }
     if self.pos.x == HBLANK_END {
-      // reset x position and start rendering again if not in vblank
+      // reset x position and start OAM scan/rendering again if not in vblank
       self.pos.x = 0;
-      if self.stat.ppu_mode != PpuMode::VBlank {
-        self.stat.ppu_mode = PpuMode::Rendering;
+
+      if self.win_drawn_this_line {
+        self.win_line_counter += 1;
+        self.win_drawn_this_line = false;
       }
-    }
-    if self.pos.x == 0 {
-      // new row
+
       self.pos.y += 1;
 
-      if self.pos.y == VBLANK_START {
-        self.stat.ppu_mode = PpuMode::VBlank;
-        self.ic.lazy_dref_mut().raise(Interrupt::Vblank);
-      } else if self.pos.y == VBLANK_END {
+      if self.pos.y == VBLANK_END {
         // new frame
         is_new_frame = true;
         self.wstart = false;
+        self.win_line_counter = 0;
         self.pos.y = 0;
-        self.stat.ppu_mode = PpuMode::Rendering;
       }
       self.ly = self.pos.y as u8;
 
-      // TODO: maybe this needs to happen during an OAM scan period
-      if self.stat.ppu_mode != PpuMode::VBlank {
-        self.fill_oam_cache();
+      self.update_lyc();
+
+      if self.ly == VBLANK_START as u8 {
+        self.ic.lazy_dref_mut().raise(Interrupt::Vblank);
       }
 
-      // Update stat reg and trigger interrupt on lyc compare
-      self.stat.lyc_eq_ly = if self.ly == self.lyc {
-        if self.stat.lyc_int_select {
-          self.ic.lazy_dref_mut().raise(Interrupt::Lcd);
-        }
-        true
-      } else {
-        false
-      };
+      if self.ly < VBLANK_START as u8 {
+        self.fill_oam_cache();
+      }
+    }
+
+    // Determine and update PPU Mode
+    let new_mode = if self.pos.y >= VBLANK_START {
+      PpuMode::VBlank
+    } else if self.pos.x < 80 {
+      PpuMode::OamScan
+    } else if self.pos.x < 240 {
+      PpuMode::Rendering
+    } else {
+      PpuMode::HBlank
+    };
+
+    if new_mode != self.stat.ppu_mode {
+      self.stat.ppu_mode = new_mode;
+      self.check_stat_interrupt();
     }
 
     if self.wy == self.ly {
       self.wstart = true;
     }
-    return is_new_frame;
+
+    is_new_frame
+  }
+
+  fn update_lyc(&mut self) {
+    self.stat.lyc_eq_ly = self.ly == self.lyc;
+    if self.stat.lyc_eq_ly && self.stat.lyc_int_select {
+      self.ic.lazy_dref_mut().raise(Interrupt::Lcd);
+    }
+  }
+
+  fn check_stat_interrupt(&mut self) {
+    let trigger = match self.stat.ppu_mode {
+      PpuMode::HBlank => self.stat.mode0_int_select,
+      PpuMode::VBlank => self.stat.mode1_int_select,
+      PpuMode::OamScan => self.stat.mode2_int_select,
+      PpuMode::Rendering => false,
+    };
+    if trigger {
+      self.ic.lazy_dref_mut().raise(Interrupt::Lcd);
+    }
   }
 
   fn fill_oam_cache(&mut self) {
@@ -646,10 +720,10 @@ impl Ppu {
   }
 
   // Gets all available cached objs which could be drawn at this x coord
-  fn get_available_cached_objs(&self) -> Vec<ObjectAttribute> {
+  fn get_available_cached_objs(&self, screen_x: u32) -> Vec<ObjectAttribute> {
     let mut objs: Vec<ObjectAttribute> = Vec::new();
     for attribute in &self.oam_cache {
-      if (attribute.x_pos..(attribute.x_pos + 8)).contains(&(self.pos.x as u8 + 8)) {
+      if (attribute.x_pos..(attribute.x_pos + 8)).contains(&(screen_x as u8 + 8)) {
         objs.push(attribute.clone());
       }
     }
@@ -660,11 +734,9 @@ impl Ppu {
   // Sort the object attrs by largest x coord. Larger X coord are lower priority
   // so iterating over in order will allow to overwrite the color.
   fn sort_obj_attributes_by_rev_render_order(objs: &mut Vec<ObjectAttribute>) {
-    objs.sort_by(|a, b| {
-      match b.x_pos.cmp(&a.x_pos) {
-        std::cmp::Ordering::Equal => b.oam_idx.cmp(&a.oam_idx),
-        ord => ord,
-      }
+    objs.sort_by(|a, b| match b.x_pos.cmp(&a.x_pos) {
+      std::cmp::Ordering::Equal => b.oam_idx.cmp(&a.oam_idx),
+      ord => ord,
     });
   }
 }
