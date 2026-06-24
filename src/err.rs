@@ -1,6 +1,5 @@
 //! Errors and Result types for the gameboy emulator.
 
-use std::fmt;
 
 #[macro_export]
 macro_rules! gb_err {
@@ -12,6 +11,7 @@ macro_rules! gb_err {
 pub type GbResult<T> = Result<T, GbError>;
 
 /// Error type for the gameboy emulator
+#[allow(dead_code)]
 #[derive(Debug)]
 pub struct GbError {
   error: GbErrorType,
@@ -25,6 +25,7 @@ impl GbError {
   }
 }
 
+#[allow(dead_code)]
 #[derive(Debug)]
 pub enum GbErrorType {
   NotInitialized,

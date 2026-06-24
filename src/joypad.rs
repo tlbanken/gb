@@ -2,7 +2,6 @@
 
 use crate::err::GbResult;
 
-use log::info;
 
 pub enum JoypadInput {
   Up,

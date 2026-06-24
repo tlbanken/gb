@@ -32,11 +32,11 @@ type DispatchFn = fn(&mut Cpu, instr: u8) -> GbResult<u32>;
 
 // flags const
 /// Zero flag. Set if result of an operation is zero.
-pub const FLAG_Z: u8 = (1 << 7);
+pub const FLAG_Z: u8 = 1 << 7;
 /// Subtraction Flag. Indicates if the previous instruction was a subtraction.
-pub const FLAG_N: u8 = (1 << 6);
+pub const FLAG_N: u8 = 1 << 6;
 /// Half-Carry Flag. Indicates carry for the lower 4 bits of the result.
-pub const FLAG_H: u8 = (1 << 5);
+pub const FLAG_H: u8 = 1 << 5;
 /// Carry Flag. Set on the following:
 ///
 /// * When the result of an 8-bit addition is higher than $FF.
@@ -44,7 +44,7 @@ pub const FLAG_H: u8 = (1 << 5);
 /// * When the result of a subtraction or comparison is lower than zero (like in
 ///   Z80 and x86 CPUs, but unlike in 65XX and ARM CPUs).
 /// * When a rotate/shift operation shifts out a “1” bit.
-pub const FLAG_C: u8 = (1 << 4);
+pub const FLAG_C: u8 = 1 << 4;
 
 const HISTORY_CAP: usize = 5;
 

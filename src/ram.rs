@@ -5,12 +5,9 @@
 //! given rom to mimic this. The working ram is held internally and is lost on a
 //! power cycle.
 
-use log::{debug, info};
+use log::debug;
 
-use crate::{
-  err::{GbError, GbErrorType, GbResult},
-  gb_err,
-};
+use crate::err::GbResult;
 
 pub struct Ram {
   pub data: Vec<u8>,
@@ -33,11 +30,13 @@ impl Ram {
     Ok(())
   }
 
-  pub fn from_file(path: &'static str) -> GbResult<Ram> {
+  #[allow(dead_code)]
+  pub fn from_file(_path: &'static str) -> GbResult<Ram> {
     unimplemented!();
   }
 
-  pub fn dump(path: &'static str) -> GbResult<()> {
+  #[allow(dead_code)]
+  pub fn dump(_path: &'static str) -> GbResult<()> {
     unimplemented!();
   }
 }

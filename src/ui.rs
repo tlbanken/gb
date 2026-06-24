@@ -58,7 +58,7 @@ pub struct Ui {
 
 impl Ui {
   pub fn new(event_loop_proxy: EventLoopProxy<UserEvent>) -> Self {
-    let mut context = Context::default();
+    let context = Context::default();
 
     // remove shadows
     Self::set_default_style(&context);
@@ -377,7 +377,7 @@ impl Ui {
         let output = self.build_dasm_line(cpu, &mut vpc, &mut dasm);
         ui.monospace(RichText::from(output).color(Color32::LIGHT_YELLOW));
 
-        for i in 0..cpu.history.cap() {
+        for _ in 0..cpu.history.cap() {
           let output = self.build_dasm_line(cpu, &mut vpc, &mut dasm);
           ui.monospace(RichText::from(output).color(Color32::DARK_GRAY));
         }

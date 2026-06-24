@@ -37,9 +37,13 @@ pub const ECHO_RAM_END: u16 = 0xfdff;
 pub const TIMER_START: u16 = 0xff04;
 pub const TIMER_END: u16 = 0xff07;
 pub const JOYPAD_EXACT: u16 = 0xff00;
+#[allow(dead_code)]
 pub const SERIAL_START: u16 = 0xff01;
+#[allow(dead_code)]
 pub const SERIAL_END: u16 = 0xff02;
+#[allow(dead_code)]
 pub const AUDIO_START: u16 = 0xff10;
+#[allow(dead_code)]
 pub const AUDIO_END: u16 = 0xff3f;
 pub const HRAM_START: u16 = 0xff80;
 pub const HRAM_END: u16 = 0xfffe;

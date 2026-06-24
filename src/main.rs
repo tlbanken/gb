@@ -176,6 +176,6 @@ fn run_headless_mode(args: Args, log_level_filter: LevelFilter) {
 // ---------------------------------------------------------------------------
 
 fn run_gui_mode(rom_path: Option<PathBuf>, log_level_filter: LevelFilter) {
-  let mut gameboy = gb::Gameboy::new(log_level_filter);
+  let gameboy = gb::Gameboy::new(log_level_filter);
   gameboy.run_with_rom(rom_path).unwrap();
 }

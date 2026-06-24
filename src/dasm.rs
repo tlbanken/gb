@@ -1,7 +1,6 @@
 //! Disassembler for the Gameboy cpu. This can be used for displaying debug
 //! info.
 
-use crate::err::GbResult;
 
 use ImmInfo::*;
 
@@ -2948,7 +2947,6 @@ impl InstrDesc {
 pub struct Dasm {
   bytes_left: u32,
   name: String,
-  index: u8,
   imm16: u16,
   imm_info: Option<ImmInfo>,
   instr_desc: InstrDesc,
@@ -2960,7 +2958,6 @@ impl Dasm {
     Dasm {
       bytes_left: 0,
       name: String::new(),
-      index: 0,
       imm16: 0,
       imm_info: None,
       instr_desc: InstrDesc::new(),

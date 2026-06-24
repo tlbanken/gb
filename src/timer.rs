@@ -3,7 +3,7 @@
 use crate::err::{GbError, GbErrorType, GbResult};
 use crate::int::{Interrupt, Interrupts};
 use crate::util::LazyDref;
-use crate::{cpu, gb_err};
+use crate::gb_err;
 use log::error;
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -107,7 +107,7 @@ impl Timer {
 
   /// Step the timer. Will tick as many times as budget allows.
   pub fn step(&mut self, cycle_budget: u32) {
-    for cycle in 0..cycle_budget {
+    for _ in 0..cycle_budget {
       self.step_one();
     }
   }

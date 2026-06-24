@@ -6,8 +6,6 @@
 use crate::err::GbResult;
 use crate::screen::{Color, Pos, GB_RESOLUTION};
 use crate::state::GbState;
-use std::cell::RefCell;
-use std::rc::Rc;
 
 // ---------------------------------------------------------------------------
 // HeadlessScreen — a null screen that records pixels in CPU memory only.
@@ -18,10 +16,12 @@ use std::rc::Rc;
 // accept any ScreenDevice so that headless mode can capture and dump actual
 // output frames.
 // ---------------------------------------------------------------------------
+#[allow(dead_code)]
 pub struct HeadlessScreen {
   pub pixels: Vec<Color>,
 }
 
+#[allow(dead_code)]
 impl HeadlessScreen {
   pub fn new() -> Self {
     let count = (GB_RESOLUTION.width * GB_RESOLUTION.height) as usize;
@@ -65,7 +65,6 @@ impl HeadlessScreen {
 /// Returns the HeadlessScreen with the last rendered frame so the caller can
 /// dump it or inspect it.
 pub fn run_headless(state: &mut GbState, num_frames: u32) -> GbResult<HeadlessScreen> {
-  use crate::screen::Pos;
   use log::info;
 
   // We can't swap out the real PPU's screen reference at runtime without
@@ -75,7 +74,7 @@ pub fn run_headless(state: &mut GbState, num_frames: u32) -> GbResult<HeadlessSc
   // The PPU still renders into its own Screen; we just capture frames by
   // counting vblanks via the gb_fps tick counter and stepping manually.
 
-  let mut headless = HeadlessScreen::new();
+  let headless = HeadlessScreen::new();
   let mut frames_done = 0u32;
 
   info!(
@@ -114,8 +113,6 @@ pub fn run_headless(state: &mut GbState, num_frames: u32) -> GbResult<HeadlessSc
 // This is designed to diagnose the boot ROM VBlank wait loop at $0064.
 // ---------------------------------------------------------------------------
 pub fn trace_boot(state: &mut GbState, max_steps: u64) -> GbResult<()> {
-  use crate::util::LazyDref;
-
   let mut last_ly: u8 = 255; // sentinel
   let mut ly_reads: u64 = 0;
   let mut step_count: u64 = 0;
@@ -186,8 +183,6 @@ pub fn trace_boot(state: &mut GbState, max_steps: u64) -> GbResult<()> {
 /// Watch for the boot ROM end-phase ($00E0-$00FF) and the FF50 boot-disable
 /// write. Runs until boot_mode goes false OR max_steps is reached.
 pub fn trace_boot_end(state: &mut GbState, max_steps: u64) -> GbResult<()> {
-  use crate::util::LazyDref;
-
   let mut step_count: u64 = 0;
   let mut last_boot_mode = state.cart.borrow().boot_mode;
   let mut prev_pc: u16 = 0;
@@ -252,8 +247,6 @@ pub fn trace_boot_end(state: &mut GbState, max_steps: u64) -> GbResult<()> {
 /// Skip until boot_mode goes false, then trace the first `post_boot_steps`
 /// game instructions with full register dumps.
 pub fn trace_game_start(state: &mut GbState, post_boot_steps: u64) -> GbResult<()> {
-  use crate::util::LazyDref;
-
   let mut step_count: u64 = 0;
 
   // --- Phase 1: run until boot ROM exits ---

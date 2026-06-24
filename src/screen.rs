@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 //! Screen for the gameboy emulator
 
 use egui_wgpu::wgpu;
@@ -8,8 +9,6 @@ pub const GB_RESOLUTION: Resolution = Resolution {
   height: 144,
 };
 
-const NUM_PIXELS: usize = (GB_RESOLUTION.width * GB_RESOLUTION.height) as usize;
-
 const PIXEL_CLEAR: Color = Color {
   r: 0.1,
   g: 0.1,
@@ -17,6 +16,7 @@ const PIXEL_CLEAR: Color = Color {
   a: 1.0,
 };
 
+#[allow(dead_code)]
 #[repr(C)]
 #[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct Resolution {
@@ -24,6 +24,7 @@ pub struct Resolution {
   pub height: u32,
 }
 
+#[allow(dead_code)]
 #[repr(C)]
 #[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct Pos {
@@ -31,6 +32,7 @@ pub struct Pos {
   pub y: u32,
 }
 
+#[allow(dead_code)]
 #[repr(C)]
 #[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct Color {

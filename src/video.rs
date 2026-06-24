@@ -1,17 +1,16 @@
 //! Helper object for video rendering and drawing
 
-use egui;
 use egui_wgpu::renderer::ScreenDescriptor;
 use egui_wgpu::wgpu::util::DeviceExt;
 use egui_wgpu::wgpu::TextureView;
-use egui_wgpu::{wgpu, WgpuConfiguration};
+use egui_wgpu::wgpu;
 use egui_winit::winit;
 use egui_winit::winit::event::WindowEvent;
 use egui_winit::winit::window::Window;
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use crate::screen::{Color, Pos, Resolution, Screen};
+use crate::screen::{Resolution, Screen};
 use crate::state::GbState;
 use crate::tick_counter::TickCounter;
 use crate::ui::{Ui, UiState};

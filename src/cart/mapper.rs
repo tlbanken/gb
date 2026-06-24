@@ -2,6 +2,7 @@
 
 use crate::err::GbResult;
 
+#[allow(dead_code)]
 #[derive(Debug)]
 pub enum MapperType {
   None,

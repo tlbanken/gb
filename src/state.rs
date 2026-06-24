@@ -12,7 +12,6 @@ use std::path::PathBuf;
 use std::{cell::RefCell, rc::Rc};
 
 use crate::event::UserEvent;
-use log::{error, warn};
 
 /// Alpha used when calculating the rolling average
 const CLOCK_RATE_ALPHA: f32 = 0.9;

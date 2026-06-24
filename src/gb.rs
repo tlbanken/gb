@@ -1,34 +1,24 @@
 //! Main gameboy system module
 
-use egui_winit::winit::dpi::{LogicalSize, PhysicalSize};
-#[allow(unused)]
+use egui_winit::winit::dpi::PhysicalSize;
 use log::{debug, error, info, trace, warn, LevelFilter};
 
-use std::cell::RefCell;
-use std::rc::Rc;
 use std::time::Instant;
 
-use crate::bus::*;
-use crate::cart::Cartridge;
-use crate::cpu::Cpu;
-use crate::err::{GbError, GbErrorType, GbResult};
+use crate::err::GbResult;
 use crate::event::UserEvent;
-use crate::gb_err;
 use crate::joypad::JoypadInput;
 use crate::logger::Logger;
-use crate::ram::*;
-use crate::screen::{Color, Pos};
 use crate::state::{EmuFlow, GbState};
 use crate::ui::Ui;
 use crate::video::Video;
 
-use egui;
 use egui_winit::winit;
-use egui_winit::winit::event_loop::{EventLoopBuilder, EventLoopWindowTarget};
+use egui_winit::winit::event_loop::EventLoopBuilder;
 use egui_winit::winit::{
   event::{self, Event, WindowEvent},
   event_loop::ControlFlow,
-  window::{Window, WindowBuilder},
+  window::WindowBuilder,
 };
 
 static mut LOGGER: Logger = Logger::const_default();
@@ -42,7 +32,6 @@ const INITIAL_HEIGHT: u32 = 144 * SCALE_FACTOR;
 const TARGET_FRAME_TIME_MS: u128 = 1000 / 60;
 
 pub struct Gameboy {
-  is_init: bool,
   state: GbState,
   last_render: Instant,
   // video: Option<Video>,
@@ -56,11 +45,11 @@ impl Gameboy {
 
     Gameboy {
       state,
-      is_init: false,
       last_render: Instant::now(),
     }
   }
 
+  #[allow(dead_code)]
   pub fn run(self) -> GbResult<()> {
     self.run_with_rom(None)
   }
@@ -289,7 +278,7 @@ pub fn init_logging(level_filter: LevelFilter) {
   log::set_max_level(level_filter);
   unsafe {
     LOGGER = Logger::new(level_filter);
-    match log::set_logger(&LOGGER) {
+    match log::set_logger(&*std::ptr::addr_of!(LOGGER)) {
       Ok(()) => {}
       Err(msg) => panic!("Failed to initialize logging: {}", msg),
     }
