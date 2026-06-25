@@ -13,6 +13,8 @@ use std::{cell::RefCell, rc::Rc};
 
 use crate::event::UserEvent;
 
+use crate::keybinds::Keybinds;
+
 /// Alpha used when calculating the rolling average
 const CLOCK_RATE_ALPHA: f32 = 0.9;
 const GB_FPS_ALPHA: f32 = 0.9;
@@ -44,6 +46,7 @@ pub struct GbState {
   pub ic: Rc<RefCell<Interrupts>>,
   pub timer: Rc<RefCell<Timer>>,
   pub joypad: Rc<RefCell<Joypad>>,
+  pub keybinds: Keybinds,
   pub flow: EmuFlow,
   pub cycles: TickCounter,
   pub gb_fps: TickCounter,
@@ -63,6 +66,7 @@ impl GbState {
       ic: Rc::new(RefCell::new(Interrupts::new())),
       timer: Rc::new(RefCell::new(Timer::new())),
       joypad: Rc::new(RefCell::new(Joypad::new())),
+      keybinds: Keybinds::default(),
       flow,
       cycles: TickCounter::new(CLOCK_RATE_ALPHA),
       gb_fps: TickCounter::new(GB_FPS_ALPHA),
@@ -98,6 +102,7 @@ impl GbState {
     // connect modules to interrupt controller
     self.timer.borrow_mut().connect_ic(self.ic.clone())?;
     self.ppu.borrow_mut().connect_ic(self.ic.clone())?;
+    self.joypad.borrow_mut().connect_ic(self.ic.clone())?;
 
     // connect proxy
     self.event_loop_proxy = Some(event_loop_proxy.clone());
@@ -131,6 +136,7 @@ impl GbState {
     // connect modules to interrupt controller
     self.timer.borrow_mut().connect_ic(self.ic.clone())?;
     self.ppu.borrow_mut().connect_ic(self.ic.clone())?;
+    self.joypad.borrow_mut().connect_ic(self.ic.clone())?;
 
     // PPU screen left as None — headless mode skips pixel writes
 

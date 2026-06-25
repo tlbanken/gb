@@ -5,6 +5,7 @@ use egui::{
 };
 use egui_winit::winit::event_loop::EventLoopProxy;
 use rfd::FileDialog;
+use crate::keybinds::Action;
 use std::path::PathBuf;
 
 use crate::bus::Bus;
@@ -22,11 +23,11 @@ pub struct UiState {
   pub show_mem_window: bool,
   pub show_stat_window: bool,
   pub show_ppu_reg_window: bool,
-  pub show_ppu_palette_window: bool,
   pub show_ppu_oam_window: bool,
   pub show_timer_window: bool,
   pub show_cart_info_window: bool,
   pub show_joypad_window: bool,
+  pub show_settings_window: bool,
 }
 
 impl UiState {
@@ -38,11 +39,11 @@ impl UiState {
       show_mem_window: false,
       show_stat_window: false,
       show_ppu_reg_window: false,
-      show_ppu_palette_window: false,
       show_ppu_oam_window: false,
       show_timer_window: false,
       show_cart_info_window: false,
       show_joypad_window: false,
+      show_settings_window: false,
     }
   }
 
@@ -90,8 +91,10 @@ impl Ui {
     if ui_state.show_menu_bar {
       egui::TopBottomPanel::top(egui::Id::new("top panel")).show(ctx, |ui| {
         egui::menu::bar(ui, |ui| {
-          // resolutions
-          self.ui_reso(ui);
+          if ui.button("Settings").clicked() {
+            ui_state.show_settings_window = !ui_state.show_settings_window;
+          }
+
           // menu for debug views
           ui.menu_button("Debug Views", |ui| {
             ui.menu_button("CPU", |ui| {
@@ -110,10 +113,6 @@ impl Ui {
               // registers
               if ui.button("Registers").clicked() {
                 ui_state.show_ppu_reg_window = !ui_state.show_ppu_reg_window;
-                ui.close_menu();
-              }
-              if ui.button("Palettes").clicked() {
-                ui_state.show_ppu_palette_window = !ui_state.show_ppu_palette_window;
                 ui.close_menu();
               }
               if ui.button("OAM").clicked() {
@@ -247,9 +246,6 @@ impl Ui {
     if ui_state.show_ppu_reg_window {
       self.ui_ppu_reg(ctx, &mut gb_state.ppu.borrow_mut());
     }
-    if ui_state.show_ppu_palette_window {
-      self.ui_ppu_palettes(ctx, &mut gb_state.ppu.borrow_mut());
-    }
     if ui_state.show_ppu_oam_window {
       self.ui_ppu_oam(ctx, &mut gb_state.ppu.borrow_mut());
     }
@@ -261,6 +257,9 @@ impl Ui {
     }
     if ui_state.show_joypad_window {
       self.ui_joypad(ctx, gb_state);
+    }
+    if ui_state.show_settings_window {
+      self.ui_settings(ctx, ui_state, gb_state);
     }
   }
 
@@ -403,18 +402,16 @@ impl Ui {
     }
   }
 
-  fn ui_ppu_palettes(&self, ctx: &Context, ppu: &mut Ppu) {
-    egui::Window::new("Palettes").show(ctx, |ui| {
-      if ui.button("GRAY").clicked() {
-        ppu.palette = ppu::PALETTE_GRAY;
-      }
-      if ui.button("GREEN").clicked() {
-        ppu.palette = ppu::PALETTE_GREEN;
-      }
-      if ui.button("BLUE").clicked() {
-        ppu.palette = ppu::PALETTE_BLUE;
-      }
-    });
+  fn ui_ppu_palettes_inline(&self, ui: &mut egui::Ui, ppu: &mut Ppu) {
+    if ui.button("GRAY").clicked() {
+      ppu.palette = ppu::PALETTE_GRAY;
+    }
+    if ui.button("GREEN").clicked() {
+      ppu.palette = ppu::PALETTE_GREEN;
+    }
+    if ui.button("BLUE").clicked() {
+      ppu.palette = ppu::PALETTE_BLUE;
+    }
   }
 
   fn ui_ppu_oam(&self, ctx: &Context, ppu: &mut Ppu) {
@@ -575,5 +572,55 @@ impl Ui {
       },
       ..Default::default()
     });
+  }
+
+  fn ui_settings(&self, ctx: &Context, ui_state: &mut UiState, gb_state: &mut GbState) {
+    egui::Window::new("Settings")
+      .open(&mut ui_state.show_settings_window)
+      .resizable(true)
+      .show(ctx, |ui| {
+        ui.heading("Screen Size");
+        ui.horizontal(|ui| {
+          ui.label("Change Resolution: ");
+          self.ui_reso(ui);
+        });
+
+        ui.add_space(5.0);
+
+        ui.horizontal(|ui| {
+          ui.label("Color Palette: ");
+          self.ui_ppu_palettes_inline(ui, &mut gb_state.ppu.borrow_mut());
+        });
+
+        ui.add_space(10.0);
+        ui.separator();
+        ui.add_space(10.0);
+
+        ui.heading("Keybindings");
+        ui.add_space(5.0);
+        egui::Grid::new("keybindings_settings_grid")
+          .num_columns(2)
+          .spacing([40.0, 6.0])
+          .striped(true)
+          .show(ui, |ui| {
+            ui.label(RichText::new("Action").strong());
+            ui.label(RichText::new("Key").strong());
+            ui.end_row();
+
+            let bindings = gb_state.keybinds.get_bindings();
+            let mut sorted_bindings: Vec<_> = bindings.iter().collect();
+            sorted_bindings.sort_by_key(|(_, action)| format!("{:?}", action));
+
+            for (keycode, action) in sorted_bindings {
+              let action_name = match action {
+                Action::Joypad(joypad_input) => format!("Joypad {:?}", joypad_input),
+                Action::Control(emu_control) => format!("Control {:?}", emu_control),
+              };
+              ui.label(action_name);
+              ui.monospace(format!("{:?}", keycode));
+              ui.end_row();
+            }
+          });
+      });
   }
 }

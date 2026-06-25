@@ -7,7 +7,7 @@ use std::time::Instant;
 
 use crate::err::GbResult;
 use crate::event::UserEvent;
-use crate::joypad::JoypadInput;
+use crate::keybinds::{Action, EmuControl};
 use crate::logger::Logger;
 use crate::state::{EmuFlow, GbState};
 use crate::ui::Ui;
@@ -155,120 +155,26 @@ impl Gameboy {
   }
 
   fn handle_keyboard_input(&self, keyboard_input: event::KeyboardInput) {
-    match keyboard_input {
-      // Up
-      event::KeyboardInput {
-        virtual_keycode: Some(event::VirtualKeyCode::W),
-        state: event::ElementState::Pressed,
-        ..
-      } => self.state.joypad.borrow_mut().set_input(JoypadInput::Up),
-      event::KeyboardInput {
-        virtual_keycode: Some(event::VirtualKeyCode::W),
-        state: event::ElementState::Released,
-        ..
-      } => self.state.joypad.borrow_mut().clear_input(JoypadInput::Up),
-      // Down
-      event::KeyboardInput {
-        virtual_keycode: Some(event::VirtualKeyCode::S),
-        state: event::ElementState::Pressed,
-        ..
-      } => self.state.joypad.borrow_mut().set_input(JoypadInput::Down),
-      event::KeyboardInput {
-        virtual_keycode: Some(event::VirtualKeyCode::S),
-        state: event::ElementState::Released,
-        ..
-      } => self
-        .state
-        .joypad
-        .borrow_mut()
-        .clear_input(JoypadInput::Down),
-      // Left
-      event::KeyboardInput {
-        virtual_keycode: Some(event::VirtualKeyCode::A),
-        state: event::ElementState::Pressed,
-        ..
-      } => self.state.joypad.borrow_mut().set_input(JoypadInput::Left),
-      event::KeyboardInput {
-        virtual_keycode: Some(event::VirtualKeyCode::A),
-        state: event::ElementState::Released,
-        ..
-      } => self
-        .state
-        .joypad
-        .borrow_mut()
-        .clear_input(JoypadInput::Left),
-      // Right
-      event::KeyboardInput {
-        virtual_keycode: Some(event::VirtualKeyCode::D),
-        state: event::ElementState::Pressed,
-        ..
-      } => self.state.joypad.borrow_mut().set_input(JoypadInput::Right),
-      event::KeyboardInput {
-        virtual_keycode: Some(event::VirtualKeyCode::D),
-        state: event::ElementState::Released,
-        ..
-      } => self
-        .state
-        .joypad
-        .borrow_mut()
-        .clear_input(JoypadInput::Right),
-      // A
-      event::KeyboardInput {
-        virtual_keycode: Some(event::VirtualKeyCode::J),
-        state: event::ElementState::Pressed,
-        ..
-      } => self.state.joypad.borrow_mut().set_input(JoypadInput::A),
-      event::KeyboardInput {
-        virtual_keycode: Some(event::VirtualKeyCode::J),
-        state: event::ElementState::Released,
-        ..
-      } => self.state.joypad.borrow_mut().clear_input(JoypadInput::A),
-      // B
-      event::KeyboardInput {
-        virtual_keycode: Some(event::VirtualKeyCode::I),
-        state: event::ElementState::Pressed,
-        ..
-      } => self.state.joypad.borrow_mut().set_input(JoypadInput::B),
-      event::KeyboardInput {
-        virtual_keycode: Some(event::VirtualKeyCode::I),
-        state: event::ElementState::Released,
-        ..
-      } => self.state.joypad.borrow_mut().clear_input(JoypadInput::B),
-      // Start
-      event::KeyboardInput {
-        virtual_keycode: Some(event::VirtualKeyCode::Return),
-        state: event::ElementState::Pressed,
-        ..
-      } => self.state.joypad.borrow_mut().set_input(JoypadInput::Start),
-      event::KeyboardInput {
-        virtual_keycode: Some(event::VirtualKeyCode::Return),
-        state: event::ElementState::Released,
-        ..
-      } => self
-        .state
-        .joypad
-        .borrow_mut()
-        .clear_input(JoypadInput::Start),
-      // Select
-      event::KeyboardInput {
-        virtual_keycode: Some(event::VirtualKeyCode::Space),
-        state: event::ElementState::Pressed,
-        ..
-      } => self
-        .state
-        .joypad
-        .borrow_mut()
-        .set_input(JoypadInput::Select),
-      event::KeyboardInput {
-        virtual_keycode: Some(event::VirtualKeyCode::Space),
-        state: event::ElementState::Released,
-        ..
-      } => self
-        .state
-        .joypad
-        .borrow_mut()
-        .clear_input(JoypadInput::Select),
-      _ => {}
+    if let Some(keycode) = keyboard_input.virtual_keycode {
+      if let Some(action) = self.state.keybinds.translate(keycode) {
+        match action {
+          Action::Joypad(joypad_input) => {
+            match keyboard_input.state {
+              event::ElementState::Pressed => self.state.joypad.borrow_mut().set_input(joypad_input),
+              event::ElementState::Released => self.state.joypad.borrow_mut().clear_input(joypad_input),
+            }
+          }
+          Action::Control(emu_control) => {
+            // Placeholder: Emulation control features can be handled here in the future
+            if keyboard_input.state == event::ElementState::Pressed {
+              match emu_control {
+                EmuControl::Pause => {}
+                EmuControl::Reset => {}
+              }
+            }
+          }
+        }
+      }
     }
   }
 }

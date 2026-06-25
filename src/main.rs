@@ -13,6 +13,7 @@ mod gb;
 mod headless;
 mod int;
 mod joypad;
+mod keybinds;
 mod logger;
 mod ppu;
 mod ram;
