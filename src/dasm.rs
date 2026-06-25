@@ -3076,31 +3076,28 @@ mod tests {
     let mut dasm = Dasm::new();
     let mut bytes = VecDeque::from([0xcb, 0x10, 0xcb, 0x75, 0xcb, 0xcb]);
     // rl b
-    let mut instr = None;
-    while let val = dasm.munch(bytes.pop_front().unwrap()) {
+    let instr = loop {
+      let val = dasm.munch(bytes.pop_front().unwrap());
       if val.is_some() {
-        instr = val;
-        break;
+        break val;
       }
-    }
+    };
     assert_eq!(instr.unwrap(), "rl b");
     // bit 6 l
-    let mut instr = None;
-    while let val = dasm.munch(bytes.pop_front().unwrap()) {
+    let instr = loop {
+      let val = dasm.munch(bytes.pop_front().unwrap());
       if val.is_some() {
-        instr = val;
-        break;
+        break val;
       }
-    }
+    };
     assert_eq!(instr.unwrap(), "bit 6 l");
     // set 1 e
-    let mut instr = None;
-    while let val = dasm.munch(bytes.pop_front().unwrap()) {
+    let instr = loop {
+      let val = dasm.munch(bytes.pop_front().unwrap());
       if val.is_some() {
-        instr = val;
-        break;
+        break val;
       }
-    }
+    };
     assert_eq!(instr.unwrap(), "set 1 e");
   }
 
@@ -3109,13 +3106,12 @@ mod tests {
     let mut dasm = Dasm::new();
     let mut bytes = VecDeque::from([0x06, 100]);
     // ld b 100
-    let mut instr = None;
-    while let val = dasm.munch(bytes.pop_front().unwrap()) {
+    let instr = loop {
+      let val = dasm.munch(bytes.pop_front().unwrap());
       if val.is_some() {
-        instr = val;
-        break;
+        break val;
       }
-    }
+    };
     assert_eq!(instr.unwrap(), "ld b 100");
   }
 
@@ -3124,22 +3120,20 @@ mod tests {
     let mut dasm = Dasm::new();
     let mut bytes = VecDeque::from([0x01, 10, 0x00, 0xea, 0x34, 0x12]);
     // 01: ld bc 10
-    let mut instr = None;
-    while let val = dasm.munch(bytes.pop_front().unwrap()) {
+    let instr = loop {
+      let val = dasm.munch(bytes.pop_front().unwrap());
       if val.is_some() {
-        instr = val;
-        break;
+        break val;
       }
-    }
+    };
     assert_eq!(instr.unwrap(), "ld bc 10");
     // EA: ld ($1234) a
-    let mut instr = None;
-    while let val = dasm.munch(bytes.pop_front().unwrap()) {
+    let instr = loop {
+      let val = dasm.munch(bytes.pop_front().unwrap());
       if val.is_some() {
-        instr = val;
-        break;
+        break val;
       }
-    }
+    };
     assert_eq!(instr.unwrap(), "ld ($1234) a");
   }
 
@@ -3148,40 +3142,36 @@ mod tests {
     let mut dasm = Dasm::new();
     let mut bytes = VecDeque::from([0x10, 0x00, 0x55, 0x26, 0xff, 0xcc, 0xad, 0xde]);
     // 10: stop
-    let mut instr = None;
-    while let val = dasm.munch(bytes.pop_front().unwrap()) {
+    let instr = loop {
+      let val = dasm.munch(bytes.pop_front().unwrap());
       if val.is_some() {
-        instr = val;
-        break;
+        break val;
       }
-    }
+    };
     assert_eq!(instr.unwrap(), "stop");
     // 55: ld d l
-    let mut instr = None;
-    while let val = dasm.munch(bytes.pop_front().unwrap()) {
+    let instr = loop {
+      let val = dasm.munch(bytes.pop_front().unwrap());
       if val.is_some() {
-        instr = val;
-        break;
+        break val;
       }
-    }
+    };
     assert_eq!(instr.unwrap(), "ld d l");
     // 26: ld h 255
-    let mut instr = None;
-    while let val = dasm.munch(bytes.pop_front().unwrap()) {
+    let instr = loop {
+      let val = dasm.munch(bytes.pop_front().unwrap());
       if val.is_some() {
-        instr = val;
-        break;
+        break val;
       }
-    }
+    };
     assert_eq!(instr.unwrap(), "ld h 255");
     // CC: call z $DEAD
-    let mut instr = None;
-    while let val = dasm.munch(bytes.pop_front().unwrap()) {
+    let instr = loop {
+      let val = dasm.munch(bytes.pop_front().unwrap());
       if val.is_some() {
-        instr = val;
-        break;
+        break val;
       }
-    }
+    };
     assert_eq!(instr.unwrap(), "call z $DEAD");
   }
 }

@@ -242,7 +242,7 @@ impl Cpu {
       Interrupt::Serial => self.call(SERIAL_HANDLER).unwrap(),
       Interrupt::Joypad => self.call(JOYPAD_HANDLER).unwrap(),
     };
-    return true;
+    true
   }
 
   #[cfg(feature = "instr-trace")]

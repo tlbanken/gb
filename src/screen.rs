@@ -59,17 +59,12 @@ pub struct Screen {
 impl Screen {
   pub fn new(device: &wgpu::Device) -> Self {
     // set up initial pixels
-    let mut pixels = Vec::new();
-    for _ in 0..GB_RESOLUTION.height {
-      for _ in 0..GB_RESOLUTION.width {
-        pixels.push(PIXEL_CLEAR);
-      }
-    }
+    let pixels = vec![PIXEL_CLEAR; (GB_RESOLUTION.width * GB_RESOLUTION.height) as usize];
 
     // set up storage buffer to pass screen colors to gpu
     let pixels_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
       label: Some("Pixels Storage Buffer"),
-      contents: bytemuck::cast_slice(&pixels.as_slice()),
+      contents: bytemuck::cast_slice(pixels.as_slice()),
       usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
     });
 

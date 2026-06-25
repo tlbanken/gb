@@ -703,7 +703,7 @@ impl Ppu {
         // obj y is offset by 16 from top of screen
         if (obj_y..(obj_y + obj_height)).contains(&(self.ly + 16)) {
           let obj_bytes = [
-            self.oam[obj_idx + 0],
+            self.oam[obj_idx],
             self.oam[obj_idx + 1],
             self.oam[obj_idx + 2],
             self.oam[obj_idx + 3],
@@ -724,7 +724,7 @@ impl Ppu {
     let mut objs: Vec<ObjectAttribute> = Vec::new();
     for attribute in &self.oam_cache {
       if (attribute.x_pos..(attribute.x_pos + 8)).contains(&(screen_x as u8 + 8)) {
-        objs.push(attribute.clone());
+        objs.push(*attribute);
       }
     }
     Self::sort_obj_attributes_by_rev_render_order(&mut objs);
@@ -733,7 +733,7 @@ impl Ppu {
 
   // Sort the object attrs by largest x coord. Larger X coord are lower priority
   // so iterating over in order will allow to overwrite the color.
-  fn sort_obj_attributes_by_rev_render_order(objs: &mut Vec<ObjectAttribute>) {
+  fn sort_obj_attributes_by_rev_render_order(objs: &mut [ObjectAttribute]) {
     objs.sort_by(|a, b| match b.x_pos.cmp(&a.x_pos) {
       std::cmp::Ordering::Equal => b.oam_idx.cmp(&a.oam_idx),
       ord => ord,

@@ -1,9 +1,9 @@
 //! Main gameboy system module
 
-use egui_winit::winit::dpi::PhysicalSize;
 use log::{debug, error, info, trace, warn, LevelFilter};
 
 use std::time::Instant;
+use std::sync::Arc;
 
 use crate::err::GbResult;
 use crate::event::UserEvent;
@@ -14,12 +14,10 @@ use crate::ui::Ui;
 use crate::video::Video;
 
 use egui_winit::winit;
-use egui_winit::winit::event_loop::EventLoopBuilder;
-use egui_winit::winit::{
-  event::{self, Event, WindowEvent},
-  event_loop::ControlFlow,
-  window::WindowBuilder,
-};
+use egui_winit::winit::application::ApplicationHandler;
+use egui_winit::winit::event::{self, WindowEvent};
+use egui_winit::winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
+use egui_winit::winit::window::{Window, WindowId};
 
 static mut LOGGER: Logger = Logger::const_default();
 
@@ -34,7 +32,9 @@ const TARGET_FRAME_TIME_MS: u128 = 1000 / 60;
 pub struct Gameboy {
   state: GbState,
   last_render: Instant,
-  // video: Option<Video>,
+  rom_path: Option<std::path::PathBuf>,
+  video: Option<Video>,
+  event_loop_proxy: Option<winit::event_loop::EventLoopProxy<UserEvent>>,
 }
 
 impl Gameboy {
@@ -46,6 +46,9 @@ impl Gameboy {
     Gameboy {
       state,
       last_render: Instant::now(),
+      rom_path: None,
+      video: None,
+      event_loop_proxy: None,
     }
   }
 
@@ -56,117 +59,31 @@ impl Gameboy {
 
   pub fn run_with_rom(mut self, rom_path: Option<std::path::PathBuf>) -> GbResult<()> {
     info!("Starting emulation");
+    self.rom_path = rom_path;
 
-    // build event loop and window with custom event support
-    let event_loop = EventLoopBuilder::<UserEvent>::with_user_event().build();
-    let window = WindowBuilder::new()
-      .with_decorations(true)
-      .with_resizable(true)
-      .with_transparent(false)
-      .with_title("~ Enter the Gameboy Emulation ~")
-      .with_inner_size(winit::dpi::PhysicalSize {
-        width: INITIAL_WIDTH,
-        height: INITIAL_HEIGHT,
-      })
-      .build(&event_loop)
-      .unwrap();
+    // Build the event loop with custom event support. In winit 0.30, this uses the builder
+    // pattern on the EventLoop struct. We also create the EventLoopProxy here to store it
+    // on Gameboy, as the ActiveEventLoop inside resumed() does not allow proxy generation.
+    let event_loop = EventLoop::<UserEvent>::with_user_event().build().unwrap();
+    self.event_loop_proxy = Some(event_loop.create_proxy());
 
-    // setup ui
-    let ui = Ui::new(event_loop.create_proxy());
-
-    // setup render backend
-    let mut video = pollster::block_on(Video::new(window, ui));
-
-    // initialize the gb state
-    self.state.init(video.screen(), event_loop.create_proxy(), rom_path)?;
-
-    self.last_render = Instant::now();
-    // run as fast as possible
-    event_loop.run(move |event, _, control_flow| {
-      // run as fast as possible
-      control_flow.set_poll();
-
-      self.handle_events(event, control_flow, &mut video).unwrap();
-
-      // system step
-      self.state.step().unwrap();
-
-      // draw the window at least every 1/60 of a second
-      let now = Instant::now();
-      let dtime = now - self.last_render;
-      let should_redraw = dtime.as_millis() > TARGET_FRAME_TIME_MS;
-      if should_redraw {
-        self.last_render = now;
-        video.render(&mut self.state).unwrap();
-      }
-    });
-    // no return
-  }
-
-  fn handle_events(
-    &mut self,
-    event: Event<UserEvent>,
-    control_flow: &mut ControlFlow,
-    video: &mut Video,
-  ) -> GbResult<()> {
-    match event {
-      // window events
-      Event::WindowEvent {
-        event,
-        window_id: _,
-      } => {
-        match event {
-          WindowEvent::KeyboardInput { input, .. } => {
-            self.handle_keyboard_input(input);
-          }
-          WindowEvent::CloseRequested => {
-            control_flow.set_exit();
-          }
-          _ => (),
-        };
-        video.handle_window_event(event);
-      }
-      Event::UserEvent(event) => match event {
-        UserEvent::RequestResize(w, h) => {
-          video
-            .window()
-            .set_inner_size(PhysicalSize::new(w as f32, h as f32));
-        }
-        UserEvent::RequestRender => {
-          self.last_render = Instant::now();
-          video.render(&mut self.state).unwrap()
-        }
-        UserEvent::EmuPause => self.state.flow.paused = true,
-        UserEvent::EmuPlay => self.state.flow.paused = false,
-        UserEvent::EmuStep => self.state.flow.step = true,
-        UserEvent::EmuReset(path) => {
-          let flow = self.state.flow;
-          let elp = self.state.event_loop_proxy.clone();
-          self.state = GbState::new(flow);
-          self.state.init(video.screen(), elp.unwrap(), None)?;
-          if let Some(path_unwrapped) = path {
-            self.state.cart.borrow_mut().load(path_unwrapped)?;
-          }
-        }
-      },
-      _ => {}
-    }
+    event_loop.run_app(&mut self).unwrap();
     Ok(())
   }
 
-  fn handle_keyboard_input(&self, keyboard_input: event::KeyboardInput) {
-    if let Some(keycode) = keyboard_input.virtual_keycode {
+  fn handle_keyboard_input(&self, event: &event::KeyEvent) {
+    if let winit::keyboard::PhysicalKey::Code(keycode) = event.physical_key {
       if let Some(action) = self.state.keybinds.translate(keycode) {
         match action {
           Action::Joypad(joypad_input) => {
-            match keyboard_input.state {
+            match event.state {
               event::ElementState::Pressed => self.state.joypad.borrow_mut().set_input(joypad_input),
               event::ElementState::Released => self.state.joypad.borrow_mut().clear_input(joypad_input),
             }
           }
           Action::Control(emu_control) => {
             // Placeholder: Emulation control features can be handled here in the future
-            if keyboard_input.state == event::ElementState::Pressed {
+            if event.state == event::ElementState::Pressed {
               match emu_control {
                 EmuControl::Pause => {}
                 EmuControl::Reset => {}
@@ -174,6 +91,107 @@ impl Gameboy {
             }
           }
         }
+      }
+    }
+  }
+}
+
+// Implement ApplicationHandler to handle winit 0.30's event loop callbacks.
+impl ApplicationHandler<UserEvent> for Gameboy {
+  // resumed() is called when the application starts or is resumed. Under winit 0.30,
+  // we must create the Window and configure the graphics backend inside this callback
+  // instead of synchronously before the event loop starts.
+  fn resumed(&mut self, event_loop: &ActiveEventLoop) {
+    if self.video.is_none() {
+      event_loop.set_control_flow(ControlFlow::Poll);
+
+      // Create window using the ActiveEventLoop instance.
+      let window_attributes = Window::default_attributes()
+        .with_decorations(true)
+        .with_resizable(true)
+        .with_transparent(false)
+        .with_title("~ Enter the Gameboy Emulation ~")
+        .with_inner_size(winit::dpi::PhysicalSize {
+          width: INITIAL_WIDTH,
+          height: INITIAL_HEIGHT,
+        });
+      let window = Arc::new(event_loop.create_window(window_attributes).unwrap());
+
+      let proxy = self.event_loop_proxy.clone().unwrap();
+
+      // setup ui
+      let ui = Ui::new(proxy.clone());
+
+      // setup render backend
+      let video = pollster::block_on(Video::new(window, ui));
+
+      // initialize the gb state
+      self.state.init(video.screen(), proxy, self.rom_path.take()).unwrap();
+
+      self.video = Some(video);
+      self.last_render = Instant::now();
+    }
+  }
+
+  fn window_event(
+    &mut self,
+    event_loop: &ActiveEventLoop,
+    _window_id: WindowId,
+    event: WindowEvent,
+  ) {
+    match &event {
+      WindowEvent::KeyboardInput { event: key_event, .. } => {
+        self.handle_keyboard_input(key_event);
+      }
+      WindowEvent::CloseRequested => {
+        event_loop.exit();
+      }
+      _ => (),
+    }
+    if let Some(video) = &mut self.video {
+      video.handle_window_event(&event);
+    }
+  }
+
+  fn user_event(&mut self, _event_loop: &ActiveEventLoop, event: UserEvent) {
+    let video = self.video.as_mut().unwrap();
+    match event {
+      UserEvent::RequestResize(w, h) => {
+        let _ = video
+          .window()
+          .request_inner_size(winit::dpi::PhysicalSize::new(w, h));
+      }
+      UserEvent::RequestRender => {
+        self.last_render = Instant::now();
+        video.render(&mut self.state).unwrap();
+      }
+      UserEvent::EmuPause => self.state.flow.paused = true,
+      UserEvent::EmuPlay => self.state.flow.paused = false,
+      UserEvent::EmuStep => self.state.flow.step = true,
+      UserEvent::EmuReset(path) => {
+        let flow = self.state.flow;
+        let elp = self.state.event_loop_proxy.clone();
+        self.state = GbState::new(flow);
+        self.state.init(video.screen(), elp.unwrap(), None).unwrap();
+        if let Some(path_unwrapped) = path {
+          self.state.cart.borrow_mut().load(path_unwrapped).unwrap();
+        }
+      }
+    }
+  }
+
+  fn about_to_wait(&mut self, _event_loop: &ActiveEventLoop) {
+    // system step
+    self.state.step().unwrap();
+
+    // draw the window at least every 1/60 of a second
+    let now = Instant::now();
+    let dtime = now - self.last_render;
+    let should_redraw = dtime.as_millis() > TARGET_FRAME_TIME_MS;
+    if should_redraw {
+      self.last_render = now;
+      if let Some(video) = &mut self.video {
+        video.render(&mut self.state).unwrap();
       }
     }
   }

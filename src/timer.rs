@@ -116,12 +116,12 @@ impl Timer {
     self.master_clock = self.master_clock.wrapping_add(1);
 
     // DIV clock rate is always Div256
-    if self.master_clock % ClockRate::Div256.as_div() == 0 {
+    if self.master_clock.is_multiple_of(ClockRate::Div256.as_div()) {
       self.div = self.div.wrapping_add(1);
     }
 
     // TIMA checks
-    if self.tac.enable && self.master_clock % self.tac.clock_rate.as_div() == 0 {
+    if self.tac.enable && self.master_clock.is_multiple_of(self.tac.clock_rate.as_div()) {
       self.tick();
     }
   }

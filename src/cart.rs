@@ -84,7 +84,7 @@ impl Cartridge {
     };
     self.path = path.clone();
     info!("Loaded {}", self.path.display());
-    self.header.read_header(&Vec::from(&rom[0x100..]))?;
+    self.header.read_header(&rom[0x100..])?;
     info!("------- HEADER --------");
     info!("{:?}", self.header);
     info!("----- HEADER END ------");

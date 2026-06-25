@@ -18,10 +18,10 @@ impl Logger {
 
   /// Create a new PsxLogger with the provided level filter.
   pub fn new(level: LevelFilter) -> Self {
-    let logger = Logger {
+    
+    Logger {
       level_filter: level,
-    };
-    logger
+    }
   }
 }
 

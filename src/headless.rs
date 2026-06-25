@@ -95,7 +95,7 @@ pub fn run_headless(state: &mut GbState, num_frames: u32) -> GbResult<HeadlessSc
       state.gb_fps.tick();
 
       // Log progress every 60 frames
-      if frames_done % 60 == 0 {
+      if frames_done.is_multiple_of(60) {
         info!("[headless] frame {}/{}", frames_done, num_frames);
       }
     }
@@ -122,8 +122,8 @@ pub fn trace_boot(state: &mut GbState, max_steps: u64) -> GbResult<()> {
     max_steps
   );
   println!(
-    "[trace] {:>10}  {:>6}  {:>6}  {}",
-    "step", "PC", "LY_now", "event"
+    "[trace] {:>10}  {:>6}  {:>6}  event",
+    "step", "PC", "LY_now"
   );
 
   while step_count < max_steps {
@@ -195,7 +195,7 @@ pub fn trace_boot_end(state: &mut GbState, max_steps: u64) -> GbResult<()> {
     let boot_mode = state.cart.borrow().boot_mode;
 
     // Print every instruction in the boot ROM end-phase ($00D0–$00FF)
-    if pc >= 0x00D0 && pc <= 0x00FF {
+    if (0x00D0..=0x00FF).contains(&pc) {
       let op = state.bus.borrow().read8_debug(pc);
       let im1 = state.bus.borrow().read8_debug(pc.wrapping_add(1));
       println!(
@@ -261,7 +261,7 @@ pub fn trace_game_start(state: &mut GbState, post_boot_steps: u64) -> GbResult<(
     state.timer.borrow_mut().step(cycle_budget);
     step_count += 1;
 
-    if step_count % 500_000 == 0 {
+    if step_count.is_multiple_of(500_000) {
       let pc = state.cpu.borrow().pc;
       println!(
         "[game_trace]   still in boot ROM after {} steps, PC=${:04X}",

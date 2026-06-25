@@ -62,7 +62,7 @@ impl Header {
 
   // Reads out the header from the given byte stream. The byte stream should start
   // at 0x100
-  pub fn read_header(&mut self, bytes: &Vec<u8>) -> GbResult<()> {
+  pub fn read_header(&mut self, bytes: &[u8]) -> GbResult<()> {
     // $0134-$0143 Title
     self.title = String::from_utf8(Vec::from(&bytes[0x34..=0x43]))
       // if we fail, try only up to $013e as this is exclusive to the title
@@ -84,7 +84,7 @@ impl Header {
       // use new licensee list
       // the code in the new licensee list is a two char ascii code
       let ascii_code = String::from_utf8(Vec::from(&bytes[0x44..=0x45])).unwrap();
-      get_new_publisher(&*ascii_code)
+      get_new_publisher(&ascii_code)
     } else {
       // use old licensee list
       get_old_publisher(code)

@@ -1,9 +1,9 @@
 //! Helper object for video rendering and drawing
 
-use egui_wgpu::renderer::ScreenDescriptor;
+use egui_wgpu::wgpu;
 use egui_wgpu::wgpu::util::DeviceExt;
 use egui_wgpu::wgpu::TextureView;
-use egui_wgpu::wgpu;
+use egui_wgpu::ScreenDescriptor;
 use egui_winit::winit;
 use egui_winit::winit::event::WindowEvent;
 use egui_winit::winit::window::Window;
@@ -26,7 +26,7 @@ const CLEAR_COLOR: wgpu::Color = wgpu::Color {
 
 pub struct Video {
   screen: Rc<RefCell<Screen>>,
-  surface: wgpu::Surface,
+  surface: wgpu::Surface<'static>,
   device: wgpu::Device,
   queue: wgpu::Queue,
   config: wgpu::SurfaceConfiguration,
@@ -39,28 +39,29 @@ pub struct Video {
   egui_state: egui_winit::State,
   ui_state: UiState,
   fps: TickCounter,
-  // The window must be declared after the surface so
-  // it gets dropped after it as the surface contains
-  // unsafe references to the window's resources.
-  window: Window,
+  // Wrap the window in std::sync::Arc to share ownership with the wgpu Surface.
+  // This allows the Surface to have a 'static lifetime, bypassing self-referential
+  // lifetime errors between the window and surface inside the Video struct.
+  // The window must be declared after the surface so it gets dropped after it
+  // as the surface contains references to the window's resources.
+  window: std::sync::Arc<Window>,
 }
 
 impl Video {
-  pub async fn new(window: Window, ui: Ui) -> Self {
+  pub async fn new(window: std::sync::Arc<Window>, ui: Ui) -> Self {
     let size = Resolution {
       width: window.inner_size().width,
       height: window.inner_size().height,
     };
 
     // the instance gives us a way to create handle to gpu and create surfaces
-    let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
+    let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
       backends: wgpu::Backends::all(),
       ..Default::default()
     });
 
-    // Create surface. The surface needs to live as long as the window for this
-    // to be safe.
-    let surface = unsafe { instance.create_surface(&window) }.unwrap();
+    // Create surface.
+    let surface = instance.create_surface(window.clone()).unwrap();
 
     // get handle to gpu
     let adapter = instance
@@ -74,14 +75,12 @@ impl Video {
 
     // create device and queue
     let (device, queue) = adapter
-      .request_device(
-        &wgpu::DeviceDescriptor {
-          features: wgpu::Features::empty(),
-          limits: wgpu::Limits::default(),
-          label: None,
-        },
-        None,
-      )
+      .request_device(&wgpu::DeviceDescriptor {
+        required_features: wgpu::Features::empty(),
+        required_limits: wgpu::Limits::default(),
+        label: None,
+        ..Default::default()
+      })
       .await
       .unwrap();
 
@@ -105,6 +104,7 @@ impl Video {
       present_mode: surface_caps.present_modes[0],
       alpha_mode: surface_caps.alpha_modes[0],
       view_formats: vec![],
+      desired_maximum_frame_latency: 2,
     };
     surface.configure(&device, &config);
 
@@ -158,17 +158,19 @@ impl Video {
       layout: Some(&render_pipeline_layout),
       vertex: wgpu::VertexState {
         module: &shader,
-        entry_point: "vs_main",
+        entry_point: Some("vs_main"),
         buffers: &[],
+        compilation_options: Default::default(),
       },
       fragment: Some(wgpu::FragmentState {
         module: &shader,
-        entry_point: "fs_main",
+        entry_point: Some("fs_main"),
         targets: &[Some(wgpu::ColorTargetState {
           format: config.format,
           blend: Some(wgpu::BlendState::REPLACE),
           write_mask: wgpu::ColorWrites::ALL,
         })],
+        compilation_options: Default::default(),
       }),
       primitive: wgpu::PrimitiveState {
         topology: wgpu::PrimitiveTopology::TriangleList,
@@ -187,16 +189,27 @@ impl Video {
         alpha_to_coverage_enabled: false,
       },
       multiview: None,
+      cache: None,
     });
 
     // set up egui
     let egui_state = egui_winit::State::new(
+      ui.context().clone(),
       ui.context().viewport_id(),
       &window,
-      ui.context().native_pixels_per_point(),
+      Some(window.scale_factor() as f32),
+      None,
       None,
     );
-    let egui_renderer = egui_wgpu::Renderer::new(&device, config.format, None, 1);
+    let egui_renderer = egui_wgpu::Renderer::new(
+      &device,
+      config.format,
+      egui_wgpu::RendererOptions {
+        msaa_samples: 1,
+        depth_stencil_format: None,
+        ..Default::default()
+      },
+    );
     let ui_state = UiState::new();
 
     let fps = TickCounter::new(FPS_ALPHA);
@@ -228,18 +241,15 @@ impl Video {
     self.screen.clone()
   }
 
-  pub fn handle_window_event(&mut self, event: WindowEvent) -> bool {
+  pub fn handle_window_event(&mut self, event: &WindowEvent) -> bool {
     let gb_repaint = match event {
       WindowEvent::Resized(size) => {
-        self.resize(size);
+        self.resize(*size);
         true
       }
       _ => false,
     };
-    let ui_repaint = self
-      .egui_state
-      .on_window_event(self.ui.context(), &event)
-      .repaint;
+    let ui_repaint = self.egui_state.on_window_event(&self.window, event).repaint;
 
     // repaint if either requests it
     gb_repaint || ui_repaint
@@ -286,12 +296,13 @@ impl Video {
       let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
         label: Some("Main Render Pass"),
         color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-          view: &view,
+          view,
           resolve_target: None,
           ops: wgpu::Operations {
             load: wgpu::LoadOp::Clear(CLEAR_COLOR),
             store: wgpu::StoreOp::Store,
           },
+          depth_slice: None,
         })],
         depth_stencil_attachment: None,
         ..Default::default()
@@ -299,7 +310,7 @@ impl Video {
 
       render_pass.set_pipeline(&self.render_pipeline);
       render_pass.set_bind_group(0, &self.resolution_bind_group, &[]);
-      render_pass.set_bind_group(1, &screen.bind_group(), &[]);
+      render_pass.set_bind_group(1, screen.bind_group(), &[]);
       render_pass.draw(0..6, 0..1);
     }
 
@@ -315,19 +326,17 @@ impl Video {
     for (id, delta) in &full_output.textures_delta.set {
       self
         .egui_renderer
-        .update_texture(&self.device, &self.queue, *id, &delta);
+        .update_texture(&self.device, &self.queue, *id, delta);
     }
-    self.egui_state.handle_platform_output(
-      &self.window,
-      self.ui.context(),
-      full_output.platform_output,
-    );
+    self
+      .egui_state
+      .handle_platform_output(&self.window, full_output.platform_output);
     let clipped_prims = &self
       .ui
       .context()
-      .tessellate(full_output.shapes, self.ui.context().pixels_per_point());
+      .tessellate(full_output.shapes, self.window.scale_factor() as f32);
     let screen_descriptor = ScreenDescriptor {
-      size_in_pixels: [self.size.width as u32, self.size.height as u32],
+      size_in_pixels: [self.size.width, self.size.height],
       pixels_per_point: self.window.scale_factor() as f32,
     };
     let mut encoder = self
@@ -341,11 +350,11 @@ impl Video {
         &self.device,
         &self.queue,
         &mut encoder,
-        &clipped_prims,
+        clipped_prims,
         &screen_descriptor,
       );
 
-      let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+      let render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
         label: Some("Egui Render Pass"),
         color_attachments: &[Some(wgpu::RenderPassColorAttachment {
           view,
@@ -354,13 +363,20 @@ impl Video {
             load: wgpu::LoadOp::Load,
             store: wgpu::StoreOp::Store,
           },
+          depth_slice: None,
         })],
         depth_stencil_attachment: None,
         ..Default::default()
       });
+      // Call forget_lifetime() to detach the RenderPass from the local
+      // CommandEncoder's lifetime borrow. This converts the render pass to
+      // RenderPass<'static>, which is required by egui_wgpu::Renderer::render
+      // to perform internal rendering operations, and permits submitting the
+      // command encoder afterwards.
+      let mut render_pass = render_pass.forget_lifetime();
       self
         .egui_renderer
-        .render(&mut render_pass, &clipped_prims, &screen_descriptor);
+        .render(&mut render_pass, clipped_prims, &screen_descriptor);
     }
     self.queue.submit(std::iter::once(encoder.finish()));
   }

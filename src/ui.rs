@@ -90,7 +90,7 @@ impl Ui {
     // ui layout
     if ui_state.show_menu_bar {
       egui::TopBottomPanel::top(egui::Id::new("top panel")).show(ctx, |ui| {
-        egui::menu::bar(ui, |ui| {
+        egui::MenuBar::new().ui(ui, |ui| {
           if ui.button("Settings").clicked() {
             ui_state.show_settings_window = !ui_state.show_settings_window;
           }
@@ -101,40 +101,32 @@ impl Ui {
               // registers
               if ui.button("Registers").clicked() {
                 ui_state.show_cpu_reg_window = !ui_state.show_cpu_reg_window;
-                ui.close_menu();
               }
               // disassembly
               if ui.button("Disassembly").clicked() {
                 ui_state.show_cpu_dasm_window = !ui_state.show_cpu_dasm_window;
-                ui.close_menu();
               }
             });
             ui.menu_button("PPU", |ui| {
               // registers
               if ui.button("Registers").clicked() {
                 ui_state.show_ppu_reg_window = !ui_state.show_ppu_reg_window;
-                ui.close_menu();
               }
               if ui.button("OAM").clicked() {
                 ui_state.show_ppu_oam_window = !ui_state.show_ppu_oam_window;
-                ui.close_menu();
               }
             });
             if ui.button("Memory").clicked() {
               ui_state.show_mem_window = !ui_state.show_mem_window;
-              ui.close_menu();
             }
             if ui.button("Timer").clicked() {
               ui_state.show_timer_window = !ui_state.show_timer_window;
-              ui.close_menu();
             }
             if ui.button("Cartridge Info").clicked() {
               ui_state.show_cart_info_window = !ui_state.show_cart_info_window;
-              ui.close_menu();
             }
             if ui.button("Joypad").clicked() {
               ui_state.show_joypad_window = !ui_state.show_joypad_window;
-              ui.close_menu();
             }
           });
 
@@ -179,39 +171,30 @@ impl Ui {
           ui.menu_button("Speed", |ui| {
             if ui.button(".01%").clicked() {
               gb_state.flow.speed = 0.0001;
-              ui.close_menu();
             }
             if ui.button("1%").clicked() {
               gb_state.flow.speed = 0.01;
-              ui.close_menu();
             }
             if ui.button("25%").clicked() {
               gb_state.flow.speed = 0.25;
-              ui.close_menu();
             }
             if ui.button("50%").clicked() {
               gb_state.flow.speed = 0.50;
-              ui.close_menu();
             }
             if ui.button("75%").clicked() {
               gb_state.flow.speed = 0.75;
-              ui.close_menu();
             }
             if ui.button("100%").clicked() {
               gb_state.flow.speed = 1.00;
-              ui.close_menu();
             }
             if ui.button("200%").clicked() {
               gb_state.flow.speed = 2.00;
-              ui.close_menu();
             }
             if ui.button("400%").clicked() {
               gb_state.flow.speed = 4.00;
-              ui.close_menu();
             }
             if ui.button("800%").clicked() {
               gb_state.flow.speed = 8.00;
-              ui.close_menu();
             }
           });
           ui.monospace("  |  ");
@@ -270,7 +253,7 @@ impl Ui {
     });
     egui::Window::new("Stats")
       .resizable(false)
-      .anchor(Align2::RIGHT_TOP, [0.0, 0.0])
+      .anchor(Align2::RIGHT_TOP, [0.0, ctx.available_rect().min.y])
       .title_bar(false)
       .show(ctx, |ui| {
         ui.visuals_mut().override_text_color = Some(Color32::YELLOW);
@@ -423,7 +406,7 @@ impl Ui {
           ui.monospace(format!("Object #{}", offset / 4));
           ui.monospace("---------------");
           let obj_bytes = [
-            ppu.oam[offset + 0],
+            ppu.oam[offset],
             ppu.oam[offset + 1],
             ppu.oam[offset + 2],
             ppu.oam[offset + 3],
@@ -480,11 +463,11 @@ impl Ui {
           row_height,
           num_rows,
           |ui, row_range| {
-            ui.style_mut().wrap = Some(false);
+            ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Extend);
             // memory dump
             for row in row_range {
               let row_addr = row * num_cols;
-              let mut row_str = String::from(format!("{:04X}  ", row_addr));
+              let mut row_str = format!("{:04X}  ", row_addr);
               let mut as_char_str = String::from(" | ");
               for col in 0..num_cols {
                 let addr = row_addr + col;
@@ -522,42 +505,36 @@ impl Ui {
           .event_loop_proxy
           .send_event(UserEvent::RequestResize(160, 144))
           .unwrap();
-        ui.close_menu();
       }
       if ui.button("480 x 432 (x3)").clicked() {
         self
           .event_loop_proxy
           .send_event(UserEvent::RequestResize(480, 432))
           .unwrap();
-        ui.close_menu();
       }
       if ui.button("800 x 720 (x5)").clicked() {
         self
           .event_loop_proxy
           .send_event(UserEvent::RequestResize(800, 720))
           .unwrap();
-        ui.close_menu();
       }
       if ui.button("1280 x 1152 (x8)").clicked() {
         self
           .event_loop_proxy
           .send_event(UserEvent::RequestResize(1280, 1152))
           .unwrap();
-        ui.close_menu();
       }
       if ui.button("1600 x 1440 (x10)").clicked() {
         self
           .event_loop_proxy
           .send_event(UserEvent::RequestResize(1600, 1440))
           .unwrap();
-        ui.close_menu();
       }
       if ui.button("2400 x 2160 (x15)").clicked() {
         self
           .event_loop_proxy
           .send_event(UserEvent::RequestResize(2400, 2160))
           .unwrap();
-        ui.close_menu();
       }
     });
   }

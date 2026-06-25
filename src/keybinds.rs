@@ -1,7 +1,7 @@
 //! Keybindings mapping and management for Gameboy inputs.
 
 use crate::joypad::JoypadInput;
-use egui_winit::winit::event::VirtualKeyCode;
+use egui_winit::winit::keyboard::KeyCode;
 use std::collections::HashMap;
 
 /// Represents an action triggered by a key press or release.
@@ -23,7 +23,7 @@ pub enum EmuControl {
 /// Keybindings configuration.
 #[derive(Clone, Debug)]
 pub struct Keybinds {
-  bindings: HashMap<VirtualKeyCode, Action>,
+  bindings: HashMap<KeyCode, Action>,
 }
 
 impl Default for Keybinds {
@@ -32,14 +32,14 @@ impl Default for Keybinds {
     let mut bindings = HashMap::new();
 
     // Default Joypad mappings
-    bindings.insert(VirtualKeyCode::W, Action::Joypad(JoypadInput::Up));
-    bindings.insert(VirtualKeyCode::S, Action::Joypad(JoypadInput::Down));
-    bindings.insert(VirtualKeyCode::A, Action::Joypad(JoypadInput::Left));
-    bindings.insert(VirtualKeyCode::D, Action::Joypad(JoypadInput::Right));
-    bindings.insert(VirtualKeyCode::J, Action::Joypad(JoypadInput::A));
-    bindings.insert(VirtualKeyCode::I, Action::Joypad(JoypadInput::B));
-    bindings.insert(VirtualKeyCode::Return, Action::Joypad(JoypadInput::Start));
-    bindings.insert(VirtualKeyCode::Space, Action::Joypad(JoypadInput::Select));
+    bindings.insert(KeyCode::KeyW, Action::Joypad(JoypadInput::Up));
+    bindings.insert(KeyCode::KeyS, Action::Joypad(JoypadInput::Down));
+    bindings.insert(KeyCode::KeyA, Action::Joypad(JoypadInput::Left));
+    bindings.insert(KeyCode::KeyD, Action::Joypad(JoypadInput::Right));
+    bindings.insert(KeyCode::KeyJ, Action::Joypad(JoypadInput::A));
+    bindings.insert(KeyCode::KeyI, Action::Joypad(JoypadInput::B));
+    bindings.insert(KeyCode::Enter, Action::Joypad(JoypadInput::Start));
+    bindings.insert(KeyCode::Space, Action::Joypad(JoypadInput::Select));
 
     Keybinds { bindings }
   }
@@ -51,7 +51,7 @@ impl Keybinds {
   #[allow(dead_code)]
   pub fn new<I>(bindings: I) -> Self
   where
-    I: IntoIterator<Item = (VirtualKeyCode, Action)>,
+    I: IntoIterator<Item = (KeyCode, Action)>,
   {
     Keybinds {
       bindings: bindings.into_iter().collect(),
@@ -59,13 +59,13 @@ impl Keybinds {
   }
 
   /// Translate a keyboard key into its mapped action.
-  pub fn translate(&self, key: VirtualKeyCode) -> Option<Action> {
+  pub fn translate(&self, key: KeyCode) -> Option<Action> {
     self.bindings.get(&key).copied()
   }
 
   /// Remap a keyboard key to a new action.
   #[allow(dead_code)]
-  pub fn remap(&mut self, key: VirtualKeyCode, action: Action) {
+  pub fn remap(&mut self, key: KeyCode, action: Action) {
     // Optionally clean up any existing key mapped to this action
     self.bindings.retain(|_, v| *v != action);
     self.bindings.insert(key, action);
@@ -73,13 +73,13 @@ impl Keybinds {
 
   /// Remove mapping for a key.
   #[allow(dead_code)]
-  pub fn unmap(&mut self, key: VirtualKeyCode) {
+  pub fn unmap(&mut self, key: KeyCode) {
     self.bindings.remove(&key);
   }
 
   /// Get the map of all bindings.
   #[allow(dead_code)]
-  pub fn get_bindings(&self) -> &HashMap<VirtualKeyCode, Action> {
+  pub fn get_bindings(&self) -> &HashMap<KeyCode, Action> {
     &self.bindings
   }
 }
@@ -91,39 +91,39 @@ mod tests {
   #[test]
   fn test_translation() {
     let keybinds = Keybinds::new([
-      (VirtualKeyCode::W, Action::Joypad(JoypadInput::Up)),
-      (VirtualKeyCode::Space, Action::Joypad(JoypadInput::Select)),
+      (KeyCode::KeyW, Action::Joypad(JoypadInput::Up)),
+      (KeyCode::Space, Action::Joypad(JoypadInput::Select)),
     ]);
     assert_eq!(
-      keybinds.translate(VirtualKeyCode::W),
+      keybinds.translate(KeyCode::KeyW),
       Some(Action::Joypad(JoypadInput::Up))
     );
     assert_eq!(
-      keybinds.translate(VirtualKeyCode::Space),
+      keybinds.translate(KeyCode::Space),
       Some(Action::Joypad(JoypadInput::Select))
     );
-    assert_eq!(keybinds.translate(VirtualKeyCode::Escape), None);
+    assert_eq!(keybinds.translate(KeyCode::Escape), None);
   }
 
   #[test]
   fn test_remap() {
-    let mut keybinds = Keybinds::new([(VirtualKeyCode::W, Action::Joypad(JoypadInput::Up))]);
+    let mut keybinds = Keybinds::new([(KeyCode::KeyW, Action::Joypad(JoypadInput::Up))]);
 
-    // Map Up to UpArrow
-    keybinds.remap(VirtualKeyCode::Up, Action::Joypad(JoypadInput::Up));
+    // Map Up to ArrowUp
+    keybinds.remap(KeyCode::ArrowUp, Action::Joypad(JoypadInput::Up));
     assert_eq!(
-      keybinds.translate(VirtualKeyCode::Up),
+      keybinds.translate(KeyCode::ArrowUp),
       Some(Action::Joypad(JoypadInput::Up))
     );
     // Old mapping for Up (W) should be automatically unmapped to prevent duplicate
     // key actions
-    assert_eq!(keybinds.translate(VirtualKeyCode::W), None);
+    assert_eq!(keybinds.translate(KeyCode::KeyW), None);
   }
 
   #[test]
   fn test_unmap() {
-    let mut keybinds = Keybinds::new([(VirtualKeyCode::W, Action::Joypad(JoypadInput::Up))]);
-    keybinds.unmap(VirtualKeyCode::W);
-    assert_eq!(keybinds.translate(VirtualKeyCode::W), None);
+    let mut keybinds = Keybinds::new([(KeyCode::KeyW, Action::Joypad(JoypadInput::Up))]);
+    keybinds.unmap(KeyCode::KeyW);
+    assert_eq!(keybinds.translate(KeyCode::KeyW), None);
   }
 }
