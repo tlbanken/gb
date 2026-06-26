@@ -1,7 +1,7 @@
 //! Gameboy state
 
 use crate::int::Interrupts;
-use crate::screen::Screen;
+use crate::screen::ScreenDevice;
 use crate::tick_counter::TickCounter;
 use crate::timer::Timer;
 use crate::{
@@ -68,8 +68,8 @@ impl GbState {
       joypad: Rc::new(RefCell::new(Joypad::new())),
       keybinds: Keybinds::default(),
       flow,
-      cycles: TickCounter::new(CLOCK_RATE_ALPHA),
-      gb_fps: TickCounter::new(GB_FPS_ALPHA),
+      cycles: TickCounter::new(CLOCK_RATE_ALPHA, 0.01),
+      gb_fps: TickCounter::new(GB_FPS_ALPHA, 0.5),
       clock_rate: 0.0,
       event_loop_proxy: None,
     }
@@ -77,7 +77,7 @@ impl GbState {
 
   pub fn init(
     &mut self,
-    screen: Rc<RefCell<Screen>>,
+    screen: Rc<RefCell<dyn ScreenDevice>>,
     event_loop_proxy: EventLoopProxy<UserEvent>,
     rom_path: Option<PathBuf>,
   ) -> GbResult<()> {
@@ -117,11 +117,15 @@ impl GbState {
   }
 
   /// Initialise hardware without a window/GPU — for headless/debug runs.
-  pub fn init_headless(&mut self, rom_path: std::path::PathBuf) -> GbResult<()> {
+  pub fn init_headless(
+    &mut self,
+    screen: Rc<RefCell<dyn ScreenDevice>>,
+    rom_path: std::path::PathBuf,
+  ) -> GbResult<()> {
     // connect interrupts to cpu
     self.ic.borrow_mut().connect_cpu(self.cpu.clone())?;
 
-    // connect Bus to memory (no screen needed)
+    // connect Bus to memory
     self.bus.borrow_mut().connect_wram(self.wram.clone())?;
     self.bus.borrow_mut().connect_hram(self.hram.clone())?;
     self.bus.borrow_mut().connect_cartridge(self.cart.clone())?;
@@ -138,7 +142,8 @@ impl GbState {
     self.ppu.borrow_mut().connect_ic(self.ic.clone())?;
     self.joypad.borrow_mut().connect_ic(self.ic.clone())?;
 
-    // PPU screen left as None — headless mode skips pixel writes
+    // connect PPU to screen
+    self.ppu.borrow_mut().connect_screen(screen)?;
 
     // load ROM
     self.cart.borrow_mut().load(rom_path)?;
@@ -154,7 +159,7 @@ impl GbState {
 
     if self.flow.step {
       self.clock_rate = 0.0;
-      self.step_one()?;
+      let _ = self.step_one()?;
     } else {
       self.step_chunk()?;
     }
@@ -173,31 +178,30 @@ impl GbState {
     // only show clock rate when we are doing work
     self.clock_rate = clock_rate;
 
-    // how many steps in a chunk
-    const CHUNK_SIZE: u32 = 4;
-
-    for _ in 0..CHUNK_SIZE {
-      self.step_one()?;
+    // Run until we have executed a target cycle budget for this chunk
+    const CHUNK_CYCLE_BUDGET: u32 = 2000;
+    let mut cycles_executed = 0;
+    while cycles_executed < CHUNK_CYCLE_BUDGET {
+      let (_, cycles) = self.step_one()?;
+      cycles_executed += cycles;
     }
 
     Ok(())
   }
 
   #[inline]
-  fn step_one(&mut self) -> GbResult<()> {
+  pub fn step_one(&mut self) -> GbResult<(bool, u32)> {
     let cycle_budget = self.cpu.borrow_mut().step()?;
-    for _ in 0..cycle_budget {
-      self.cycles.tick();
-    }
-    if self.ppu.borrow_mut().step(cycle_budget)? {
+    self.cycles.tick_by(cycle_budget as u64);
+    let new_frame = self.ppu.borrow_mut().step(cycle_budget)?;
+    if new_frame {
       self.gb_fps.tick();
-      match &self.event_loop_proxy {
-        Some(elp) => elp.send_event(UserEvent::RequestRender).unwrap(),
-        None => panic!(),
+      if let Some(elp) = &self.event_loop_proxy {
+        let _ = elp.send_event(UserEvent::RequestRender);
       }
     }
     self.ic.borrow_mut().step();
     self.timer.borrow_mut().step(cycle_budget);
-    Ok(())
+    Ok((new_frame, cycle_budget))
   }
 }

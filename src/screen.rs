@@ -147,3 +147,70 @@ impl Screen {
     self.pixels[(pos.y * GB_RESOLUTION.width + pos.x) as usize] = col;
   }
 }
+
+pub trait ScreenDevice {
+  fn set_pixel(&mut self, pos: Pos, col: Color);
+  fn clear(&mut self);
+  fn as_any(&self) -> &dyn std::any::Any;
+}
+
+impl ScreenDevice for Screen {
+  fn set_pixel(&mut self, pos: Pos, col: Color) {
+    self.set_pixel(pos, col);
+  }
+
+  fn clear(&mut self) {
+    self.pixels.fill(PIXEL_CLEAR);
+  }
+
+  fn as_any(&self) -> &dyn std::any::Any {
+    self
+  }
+}
+
+#[derive(Clone)]
+pub struct HeadlessScreen {
+  pub pixels: Vec<Color>,
+}
+
+impl HeadlessScreen {
+  pub fn new() -> Self {
+    let count = (GB_RESOLUTION.width * GB_RESOLUTION.height) as usize;
+    Self {
+      pixels: vec![Color::new(0.0, 0.0, 0.0); count],
+    }
+  }
+
+  /// Dump the current framebuffer to a PPM file (no external deps required).
+  pub fn dump_ppm(&self, path: &str) -> std::io::Result<()> {
+    use std::io::Write;
+    let mut f = std::fs::File::create(path)?;
+    writeln!(f, "P6")?;
+    writeln!(f, "{} {}", GB_RESOLUTION.width, GB_RESOLUTION.height)?;
+    writeln!(f, "255")?;
+    for px in &self.pixels {
+      f.write_all(&[
+        (px.r * 255.0) as u8,
+        (px.g * 255.0) as u8,
+        (px.b * 255.0) as u8,
+      ])?;
+    }
+    Ok(())
+  }
+}
+
+impl ScreenDevice for HeadlessScreen {
+  fn set_pixel(&mut self, pos: Pos, col: Color) {
+    if pos.x < GB_RESOLUTION.width && pos.y < GB_RESOLUTION.height {
+      self.pixels[(pos.y * GB_RESOLUTION.width + pos.x) as usize] = col;
+    }
+  }
+
+  fn clear(&mut self) {
+    self.pixels.fill(Color::new(0.0, 0.0, 0.0));
+  }
+
+  fn as_any(&self) -> &dyn std::any::Any {
+    self
+  }
+}

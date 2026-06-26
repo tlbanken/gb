@@ -4,55 +4,8 @@
 //! so the emulator can run without a GPU/window, purely for debugging.
 
 use crate::err::GbResult;
-use crate::screen::{Color, Pos, GB_RESOLUTION};
+use crate::screen::HeadlessScreen;
 use crate::state::GbState;
-
-// ---------------------------------------------------------------------------
-// HeadlessScreen — a null screen that records pixels in CPU memory only.
-// Structurally identical surface to Screen but requires no wgpu device.
-//
-// TODO: Refactor Screen (in screen.rs) into a trait (e.g., `trait
-// ScreenDevice`) and make HeadlessScreen implement it. Then update Ppu to
-// accept any ScreenDevice so that headless mode can capture and dump actual
-// output frames.
-// ---------------------------------------------------------------------------
-#[allow(dead_code)]
-pub struct HeadlessScreen {
-  pub pixels: Vec<Color>,
-}
-
-#[allow(dead_code)]
-impl HeadlessScreen {
-  pub fn new() -> Self {
-    let count = (GB_RESOLUTION.width * GB_RESOLUTION.height) as usize;
-    Self {
-      pixels: vec![Color::new(0.0, 0.0, 0.0); count],
-    }
-  }
-
-  pub fn set_pixel(&mut self, pos: Pos, col: Color) {
-    if pos.x < GB_RESOLUTION.width && pos.y < GB_RESOLUTION.height {
-      self.pixels[(pos.y * GB_RESOLUTION.width + pos.x) as usize] = col;
-    }
-  }
-
-  /// Dump the current framebuffer to a PPM file (no external deps required).
-  pub fn dump_ppm(&self, path: &str) -> std::io::Result<()> {
-    use std::io::Write;
-    let mut f = std::fs::File::create(path)?;
-    writeln!(f, "P6")?;
-    writeln!(f, "{} {}", GB_RESOLUTION.width, GB_RESOLUTION.height)?;
-    writeln!(f, "255")?;
-    for px in &self.pixels {
-      f.write_all(&[
-        (px.r * 255.0) as u8,
-        (px.g * 255.0) as u8,
-        (px.b * 255.0) as u8,
-      ])?;
-    }
-    Ok(())
-  }
-}
 
 // ---------------------------------------------------------------------------
 // HeadlessPpu — wraps the real PPU but feeds into a HeadlessScreen.
@@ -74,7 +27,6 @@ pub fn run_headless(state: &mut GbState, num_frames: u32) -> GbResult<HeadlessSc
   // The PPU still renders into its own Screen; we just capture frames by
   // counting vblanks via the gb_fps tick counter and stepping manually.
 
-  let headless = HeadlessScreen::new();
   let mut frames_done = 0u32;
 
   info!(
@@ -84,24 +36,35 @@ pub fn run_headless(state: &mut GbState, num_frames: u32) -> GbResult<HeadlessSc
   );
 
   while frames_done < num_frames {
-    // Step one CPU instruction + PPU + IC + timer
-    let cycle_budget = state.cpu.borrow_mut().step()?;
-    let new_frame = state.ppu.borrow_mut().step(cycle_budget)?;
-    state.ic.borrow_mut().step();
-    state.timer.borrow_mut().step(cycle_budget);
+    // Step emulator by one instruction
+    let (new_frame, _) = state.step_one()?;
 
     if new_frame {
       frames_done += 1;
-      state.gb_fps.tick();
 
       // Log progress every 60 frames
       if frames_done.is_multiple_of(60) {
-        info!("[headless] frame {}/{}", frames_done, num_frames);
+        info!(
+          "[headless] frame {}/{}. GB FPS: {:.1}",
+          frames_done,
+          num_frames,
+          state.gb_fps.tps()
+        );
       }
     }
   }
 
   info!("[headless] run complete after {} frames", frames_done);
+
+  // Retrieve and clone the HeadlessScreen from PPU
+  let screen_ref = state.ppu.borrow().screen().unwrap();
+  let screen_borrow = screen_ref.borrow();
+  let headless = screen_borrow
+    .as_any()
+    .downcast_ref::<HeadlessScreen>()
+    .expect("PPU screen is not a HeadlessScreen")
+    .clone();
+
   Ok(headless)
 }
 
@@ -147,10 +110,7 @@ pub fn trace_boot(state: &mut GbState, max_steps: u64) -> GbResult<()> {
     let is_ldh_ly = opcode == 0xF0 && imm == 0x44;
 
     // Step
-    let cycle_budget = state.cpu.borrow_mut().step()?;
-    state.ppu.borrow_mut().step(cycle_budget)?;
-    state.ic.borrow_mut().step();
-    state.timer.borrow_mut().step(cycle_budget);
+    let _ = state.step_one()?;
 
     // After step: what did A become?
     if is_ldh_ly {
@@ -180,8 +140,10 @@ pub fn trace_boot(state: &mut GbState, max_steps: u64) -> GbResult<()> {
   Ok(())
 }
 
-/// Watch for the boot ROM end-phase ($00E0-$00FF) and the FF50 boot-disable
-/// write. Runs until boot_mode goes false OR max_steps is reached.
+// ---------------------------------------------------------------------------
+// trace_boot_end — watch for the boot ROM end-phase ($00E0-$00FF) and the FF50 boot-disable
+// write. Runs until boot_mode goes false OR max_steps is reached.
+// ---------------------------------------------------------------------------
 pub fn trace_boot_end(state: &mut GbState, max_steps: u64) -> GbResult<()> {
   let mut step_count: u64 = 0;
   let mut last_boot_mode = state.cart.borrow().boot_mode;
@@ -227,10 +189,7 @@ pub fn trace_boot_end(state: &mut GbState, max_steps: u64) -> GbResult<()> {
     }
     prev_pc = pc;
 
-    let cycle_budget = state.cpu.borrow_mut().step()?;
-    state.ppu.borrow_mut().step(cycle_budget)?;
-    state.ic.borrow_mut().step();
-    state.timer.borrow_mut().step(cycle_budget);
+    let _ = state.step_one()?;
 
     step_count += 1;
   }
@@ -244,8 +203,10 @@ pub fn trace_boot_end(state: &mut GbState, max_steps: u64) -> GbResult<()> {
   Ok(())
 }
 
-/// Skip until boot_mode goes false, then trace the first `post_boot_steps`
-/// game instructions with full register dumps.
+// ---------------------------------------------------------------------------
+// trace_game_start — skip until boot_mode goes false, then trace the first `post_boot_steps`
+// game instructions with full register dumps.
+// ---------------------------------------------------------------------------
 pub fn trace_game_start(state: &mut GbState, post_boot_steps: u64) -> GbResult<()> {
   let mut step_count: u64 = 0;
 
@@ -255,10 +216,7 @@ pub fn trace_game_start(state: &mut GbState, post_boot_steps: u64) -> GbResult<(
     if !state.cart.borrow().boot_mode {
       break;
     }
-    let cycle_budget = state.cpu.borrow_mut().step()?;
-    state.ppu.borrow_mut().step(cycle_budget)?;
-    state.ic.borrow_mut().step();
-    state.timer.borrow_mut().step(cycle_budget);
+    let _ = state.step_one()?;
     step_count += 1;
 
     if step_count.is_multiple_of(500_000) {
@@ -311,10 +269,7 @@ pub fn trace_game_start(state: &mut GbState, post_boot_steps: u64) -> GbResult<(
       step_count + i, pc, af, bc, de, hl, sp, ly, op, im1, event
     );
 
-    let cycle_budget = state.cpu.borrow_mut().step()?;
-    state.ppu.borrow_mut().step(cycle_budget)?;
-    state.ic.borrow_mut().step();
-    state.timer.borrow_mut().step(cycle_budget);
+    let _ = state.step_one()?;
 
     if pc == 0x0038 {
       println!(

@@ -20,3 +20,4 @@ impl<T> LazyDref<T> for Option<Rc<RefCell<T>>> {
     self.as_ref().unwrap().borrow_mut()
   }
 }
+

@@ -215,31 +215,31 @@ impl Ui {
 
     // show debug windows
     if ui_state.show_cpu_reg_window {
-      self.ui_cpu_reg(ctx, &mut gb_state.cpu.borrow_mut());
+      self.ui_cpu_reg(ctx, &mut ui_state.show_cpu_reg_window, &mut gb_state.cpu.borrow_mut());
     }
     if ui_state.show_cpu_dasm_window {
-      self.ui_cpu_dasm(ctx, &gb_state.cpu.borrow());
+      self.ui_cpu_dasm(ctx, &mut ui_state.show_cpu_dasm_window, &gb_state.cpu.borrow());
     }
     if ui_state.show_mem_window {
-      self.ui_mem(ctx, &mut gb_state.bus.borrow_mut());
+      self.ui_mem(ctx, &mut ui_state.show_mem_window, &mut gb_state.bus.borrow_mut());
     }
     if ui_state.show_stat_window {
       self.ui_stat(ctx, fps, gb_state);
     }
     if ui_state.show_ppu_reg_window {
-      self.ui_ppu_reg(ctx, &mut gb_state.ppu.borrow_mut());
+      self.ui_ppu_reg(ctx, &mut ui_state.show_ppu_reg_window, &mut gb_state.ppu.borrow_mut());
     }
     if ui_state.show_ppu_oam_window {
-      self.ui_ppu_oam(ctx, &mut gb_state.ppu.borrow_mut());
+      self.ui_ppu_oam(ctx, &mut ui_state.show_ppu_oam_window, &mut gb_state.ppu.borrow_mut());
     }
     if ui_state.show_timer_window {
-      self.ui_timer(ctx, &mut gb_state.timer.borrow_mut());
+      self.ui_timer(ctx, &mut ui_state.show_timer_window, &mut gb_state.timer.borrow_mut());
     }
     if ui_state.show_cart_info_window {
-      self.ui_cart_info(ctx, &mut gb_state.cart.borrow_mut());
+      self.ui_cart_info(ctx, &mut ui_state.show_cart_info_window, &mut gb_state.cart.borrow_mut());
     }
     if ui_state.show_joypad_window {
-      self.ui_joypad(ctx, gb_state);
+      self.ui_joypad(ctx, &mut ui_state.show_joypad_window, gb_state);
     }
     if ui_state.show_settings_window {
       self.ui_settings(ctx, ui_state, gb_state);
@@ -271,8 +271,10 @@ impl Ui {
     Self::set_default_style(ctx);
   }
 
-  fn ui_joypad(&self, ctx: &Context, gb_state: &mut GbState) {
-    egui::Window::new("Joypad").show(ctx, |ui| {
+  fn ui_joypad(&self, ctx: &Context, open: &mut bool, gb_state: &mut GbState) {
+    egui::Window::new("Joypad")
+      .open(open)
+      .show(ctx, |ui| {
       ui.monospace(format!(
         "Buttons: {:02x}, {}",
         gb_state.joypad.borrow().buttons_state,
@@ -286,8 +288,9 @@ impl Ui {
     });
   }
 
-  fn ui_cart_info(&self, ctx: &Context, cart: &mut Cartridge) {
+  fn ui_cart_info(&self, ctx: &Context, open: &mut bool, cart: &mut Cartridge) {
     egui::Window::new("Cartridge Info")
+      .open(open)
       .resizable(false)
       .show(ctx, |ui| {
         ui.monospace(format!("Loaded: {}", cart.loaded));
@@ -317,8 +320,9 @@ impl Ui {
       });
   }
 
-  fn ui_cpu_reg(&self, ctx: &Context, cpu: &mut Cpu) {
+  fn ui_cpu_reg(&self, ctx: &Context, open: &mut bool, cpu: &mut Cpu) {
     egui::Window::new("CPU Registers")
+      .open(open)
       .resizable(false)
       .show(ctx, |ui| {
         ui.monospace(format!("[PC] {:04x}", cpu.pc));
@@ -338,8 +342,9 @@ impl Ui {
       });
   }
 
-  fn ui_cpu_dasm(&self, ctx: &Context, cpu: &Cpu) {
+  fn ui_cpu_dasm(&self, ctx: &Context, open: &mut bool, cpu: &Cpu) {
     egui::Window::new("Disassembly")
+      .open(open)
       .resizable(false)
       .show(ctx, |ui| {
         let mut vpc = cpu.pc;
@@ -397,8 +402,8 @@ impl Ui {
     }
   }
 
-  fn ui_ppu_oam(&self, ctx: &Context, ppu: &mut Ppu) {
-    egui::Window::new("OAM").resizable(true).show(ctx, |ui| {
+  fn ui_ppu_oam(&self, ctx: &Context, open: &mut bool, ppu: &mut Ppu) {
+    egui::Window::new("OAM").open(open).resizable(true).show(ctx, |ui| {
       ui.monospace(format!("Cached Objects: {}", ppu.oam_cache.len()));
       ui.monospace("---------------");
       egui::ScrollArea::vertical().show(ui, |ui| {
@@ -425,8 +430,8 @@ impl Ui {
     });
   }
 
-  fn ui_ppu_reg(&self, ctx: &Context, ppu: &mut Ppu) {
-    egui::Window::new("PPU Registers").show(ctx, |ui| {
+  fn ui_ppu_reg(&self, ctx: &Context, open: &mut bool, ppu: &mut Ppu) {
+    egui::Window::new("PPU Registers").open(open).show(ctx, |ui| {
       ui.monospace(format!("LY: {}", ppu.ly));
       ui.monospace(format!("SCX: {}", ppu.scx));
       ui.monospace(format!("SCY: {}", ppu.scy));
@@ -447,8 +452,9 @@ impl Ui {
     });
   }
 
-  fn ui_mem(&self, ctx: &Context, bus: &mut Bus) {
+  fn ui_mem(&self, ctx: &Context, open: &mut bool, bus: &mut Bus) {
     egui::Window::new("Memory Dump")
+      .open(open)
       .resizable(true)
       .show(ctx, |ui| {
         // set up starting state
@@ -489,8 +495,8 @@ impl Ui {
       });
   }
 
-  fn ui_timer(&self, ctx: &Context, timer: &mut Timer) {
-    egui::Window::new("Timer Registers").show(ctx, |ui| {
+  fn ui_timer(&self, ctx: &Context, open: &mut bool, timer: &mut Timer) {
+    egui::Window::new("Timer Registers").open(open).show(ctx, |ui| {
       ui.monospace(format!("DIV: 0x{:02X}", timer.div));
       ui.monospace(format!("TIMA: 0x{:02X}", timer.tima));
       ui.monospace(format!("TMA: 0x{:02X}", timer.tma));

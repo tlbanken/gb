@@ -26,12 +26,13 @@ const SCALE_FACTOR: u32 = 10;
 const INITIAL_WIDTH: u32 = 160 * SCALE_FACTOR;
 const INITIAL_HEIGHT: u32 = 144 * SCALE_FACTOR;
 
-// target frame time (60 fps)
-const TARGET_FRAME_TIME_MS: u128 = 1000 / 60;
+// fallback frame time (40 fps) to keep UI responsive when game is slow/paused
+const FALLBACK_FRAME_TIME_MS: u128 = 25;
 
 pub struct Gameboy {
   state: GbState,
   last_render: Instant,
+  next_chunk_time: Instant,
   rom_path: Option<std::path::PathBuf>,
   video: Option<Video>,
   event_loop_proxy: Option<winit::event_loop::EventLoopProxy<UserEvent>>,
@@ -46,6 +47,7 @@ impl Gameboy {
     Gameboy {
       state,
       last_render: Instant::now(),
+      next_chunk_time: Instant::now(),
       rom_path: None,
       video: None,
       event_loop_proxy: None,
@@ -146,10 +148,20 @@ impl ApplicationHandler<UserEvent> for Gameboy {
       WindowEvent::CloseRequested => {
         event_loop.exit();
       }
+      WindowEvent::RedrawRequested => {
+        if let Some(video) = &mut self.video {
+          self.last_render = Instant::now();
+          if let Err(e) = video.render(&mut self.state) {
+            error!("Render error: {:?}", e);
+          }
+        }
+      }
       _ => (),
     }
     if let Some(video) = &mut self.video {
-      video.handle_window_event(&event);
+      if video.handle_window_event(&event) {
+        video.window().request_redraw();
+      }
     }
   }
 
@@ -162,8 +174,7 @@ impl ApplicationHandler<UserEvent> for Gameboy {
           .request_inner_size(winit::dpi::PhysicalSize::new(w, h));
       }
       UserEvent::RequestRender => {
-        self.last_render = Instant::now();
-        video.render(&mut self.state).unwrap();
+        video.window().request_redraw();
       }
       UserEvent::EmuPause => self.state.flow.paused = true,
       UserEvent::EmuPlay => self.state.flow.paused = false,
@@ -180,18 +191,50 @@ impl ApplicationHandler<UserEvent> for Gameboy {
     }
   }
 
-  fn about_to_wait(&mut self, _event_loop: &ActiveEventLoop) {
-    // system step
-    self.state.step().unwrap();
+  fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
+    if self.state.flow.paused && !self.state.flow.step {
+      event_loop.set_control_flow(ControlFlow::Wait);
+      return;
+    }
 
-    // draw the window at least every 1/60 of a second
-    let now = Instant::now();
-    let dtime = now - self.last_render;
-    let should_redraw = dtime.as_millis() > TARGET_FRAME_TIME_MS;
-    if should_redraw {
-      self.last_render = now;
-      if let Some(video) = &mut self.video {
-        video.render(&mut self.state).unwrap();
+    if self.state.flow.step {
+      self.state.step().unwrap();
+      if let Some(video) = &self.video {
+        video.window().request_redraw();
+      }
+    } else {
+      let speed = self.state.flow.speed;
+      let chunk_duration = if speed > 0.0 {
+        std::time::Duration::from_secs_f64(2000.0 / (4_194_304.0 * speed as f64))
+      } else {
+        std::time::Duration::from_secs(1)
+      };
+
+      while Instant::now() >= self.next_chunk_time {
+        self.state.step().unwrap();
+
+        let lag = Instant::now().checked_duration_since(self.next_chunk_time).unwrap_or(std::time::Duration::ZERO);
+        if lag > std::time::Duration::from_millis(100) {
+          self.next_chunk_time = Instant::now() + chunk_duration;
+          break;
+        } else {
+          self.next_chunk_time += chunk_duration;
+        }
+      }
+
+      let next_fallback_time = self.last_render + std::time::Duration::from_millis(FALLBACK_FRAME_TIME_MS as u64);
+      let next_wakeup = if self.next_chunk_time < next_fallback_time {
+        self.next_chunk_time
+      } else {
+        next_fallback_time
+      };
+
+      event_loop.set_control_flow(ControlFlow::WaitUntil(next_wakeup));
+
+      if Instant::now() >= next_fallback_time {
+        if let Some(video) = &self.video {
+          video.window().request_redraw();
+        }
       }
     }
   }

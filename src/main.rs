@@ -145,7 +145,8 @@ fn run_headless_mode(args: Args, log_level_filter: LevelFilter) {
   println!("[headless] Frames: {}", args.frames);
 
   let mut state = GbState::new(EmuFlow::new(false, false, 1.0));
-  state.init_headless(rom_path).expect("Failed to init headless state");
+  let headless_screen = std::rc::Rc::new(std::cell::RefCell::new(screen::HeadlessScreen::new()));
+  state.init_headless(headless_screen, rom_path).expect("Failed to init headless state");
 
   if args.trace {
     println!("[headless] TRACE MODE: {} CPU steps", args.trace_steps);

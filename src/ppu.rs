@@ -2,7 +2,7 @@
 
 use crate::err::{GbError, GbErrorType, GbResult};
 use crate::int::{Interrupt, Interrupts};
-use crate::screen::{Pos, Screen};
+use crate::screen::{Pos, ScreenDevice};
 use crate::util::LazyDref;
 use crate::{
   bus::{self, OAM_END, OAM_START, PPU_END, PPU_START},
@@ -273,7 +273,7 @@ pub struct Ppu {
   pub palette: [screen::Color; 4],
 
   // Screen to draw to
-  screen: Option<Rc<RefCell<Screen>>>,
+  screen: Option<Rc<RefCell<dyn ScreenDevice>>>,
   // interrupt controller handle
   ic: Option<Rc<RefCell<Interrupts>>>,
 
@@ -311,12 +311,16 @@ impl Ppu {
     }
   }
 
-  pub fn connect_screen(&mut self, screen: Rc<RefCell<Screen>>) -> GbResult<()> {
+  pub fn connect_screen(&mut self, screen: Rc<RefCell<dyn ScreenDevice>>) -> GbResult<()> {
     match self.screen {
       None => self.screen = Some(screen),
       Some(_) => return gb_err!(GbErrorType::AlreadyInitialized),
     }
     Ok(())
+  }
+
+  pub fn screen(&self) -> Option<Rc<RefCell<dyn ScreenDevice>>> {
+    self.screen.clone()
   }
 
   /// Adds a reference to the interrupt controller to the ppu

@@ -212,7 +212,7 @@ impl Video {
     );
     let ui_state = UiState::new();
 
-    let fps = TickCounter::new(FPS_ALPHA);
+    let fps = TickCounter::new(FPS_ALPHA, 0.5);
 
     Self {
       screen,
@@ -331,6 +331,18 @@ impl Video {
     self
       .egui_state
       .handle_platform_output(&self.window, full_output.platform_output);
+
+    let mut repaint = false;
+    for (_, viewport_output) in &full_output.viewport_output {
+      if viewport_output.repaint_delay.is_zero() {
+        repaint = true;
+        break;
+      }
+    }
+    if repaint {
+      self.window.request_redraw();
+    }
+
     let clipped_prims = &self
       .ui
       .context()
